@@ -4,11 +4,11 @@ A Spotlight-style command bar for Omarchy. Press a hotkey and type. Results appe
 
 ![Command Bar showing its help list](preview.png)
 
-<p>
-  <img src="screenshots/apps.png" alt="Opening Brave or one of its actions" width="32%">
-  <img src="screenshots/windows.png" alt="Switching to an open window" width="32%">
-  <img src="screenshots/kill.png" alt="Quitting a process" width="32%">
-</p>
+![Opening Brave or one of its actions](screenshots/apps.png)
+
+![Switching to an open window](screenshots/windows.png)
+
+![Quitting a process](screenshots/kill.png)
 
 ## What it does
 
