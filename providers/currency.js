@@ -102,10 +102,11 @@ var provider = {
   commands: function(ctx) {
     var home = String((ctx.settings && ctx.settings.home) || "USD").toLowerCase()
     var example = home === "usd" ? "100 eur to usd" : "100 usd to " + home
-    return [{ title: "Convert Currency", keywords: "currency exchange rate rates money forex fx", text: "Live exchange rates, cached offline", complete: example, select: true }]
+    return [{ title: "Convert currency", keywords: "currency exchange rate rates money forex fx", text: "Daily rates, saved for offline use", complete: example, select: true }]
   },
   help: [
-    { title: "Currency", examples: ["100 usd to eur", "$50", "50 eur"] }
+    { id: "currency", title: "Currency", about: "Daily exchange rates, saved for offline use",
+      examples: ["100 usd to eur", "$50", "50 eur"] }
   ],
   match: function(query, ctx) {
     var settings = ctx.settings || {}
@@ -119,7 +120,7 @@ var provider = {
     if (ctx.requestRates) ctx.requestRates()
 
     if (!rates) {
-      return [{ title: "Fetching exchange rates…", subtitle: ctx.ratesStatus || "No cached rates yet", score: 40, copy: "" }]
+      return [{ title: "Fetching exchange rates…", subtitle: ctx.ratesStatus || "No saved rates yet", score: 40, copy: "" }]
     }
 
     var targets = []

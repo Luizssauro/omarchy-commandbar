@@ -44,6 +44,11 @@ Item {
   property var emojis: []           // Omarchy's emojis.json: [{ e, k }]
   property var processes: null      // [{ pid, rss, cpu, name, args }], fetched on demand
   property real processesFetchedAt: 0
+  property var apps: []             // [{ id, name, generic, comment, keywords, icon, actions }]
+  property var appEntries: ({})     // id -> DesktopEntry, for launching actions
+  property var hiddenApps: ({})     // ids Omarchy hides from its own launcher
+  property var launches: ({})       // id -> times launched from the bar
+  property var windows: []          // [{ address, cls, title, workspace, focus }], taken on open
 
   // Menu surface tokens, so themes that style the Omarchy menu style this too.
   property color background: Color.menu.background
@@ -56,18 +61,33 @@ Item {
   readonly property int cornerRadius: Style.cornerRadius
   property string fontFamily: Style.font.menuFamily
   property int contentMargin: Style.spacing.panelPadding
-  property int inputHeight: Math.max(Style.space(34), Style.font.heading + Style.spacing.controlPaddingY * 2)
-  property int rowHeight: Math.max(Style.space(46), Style.font.heading + Style.font.bodySmall + Style.spacing.md * 2)
+  readonly property int inputFont: Style.font.heading
+  property int inputHeight: Math.max(Style.space(38), inputFont + Style.spacing.controlPaddingY * 2)
+  property int rowHeight: Math.max(Style.space(48), Style.font.subtitle + Style.font.bodySmall + Style.spacing.md * 2)
+  property int heroHeight: Math.max(Style.space(76), Style.font.displayLarge + Style.font.bodySmall + Style.spacing.md * 3)
   property int sectionHeight: Math.max(Style.space(26), Style.font.caption + Style.spacing.md * 2)
+  property int footerHeight: Math.max(Style.space(32), Style.font.caption + Style.spacing.md * 2)
+  readonly property int tileSize: Math.max(Style.space(30), Style.font.iconLarge + Style.space(12))
+  readonly property int tileRadius: root.cornerRadius > 0 ? Style.space(7) : 0
   // Results show up to 7 rows before scrolling; the ? list is allowed to
   // grow so it fits without scrolling, as far as the screen allows.
   readonly property int maxRows: 7
-  readonly property bool showingHelp: root.rows.length > 0 && !!root.rows[0].section
+  readonly property bool showingHelp: root.rows.length > 0 && !!root.rows[0].help
+  readonly property var selectedRow: root.rows[root.selectedIndex] || null
+  readonly property bool noResults: root.rows.length === 0 && input.text.trim() !== ""
+  property var mode: null           // { label, icon } while a prefix like ":" or "w " is typed
+  // Last pointer position in window coordinates. Rows only take the selection
+  // on hover when this changes, so a list that grows or scrolls under a
+  // resting pointer (the tall ? list) doesn't move the selection.
+  property point lastPointer: Qt.point(-1, -1)
+  function rowSize(row) {
+    return (row.hero ? root.heroHeight : root.rowHeight) + (row.section ? root.sectionHeight : 0)
+  }
   readonly property real listHeight: {
     var total = 0
     for (var i = 0; i < root.rows.length && (root.showingHelp || i < root.maxRows); i++)
-      total += root.rowHeight + (root.rows[i].section ? root.sectionHeight : 0)
-    return Math.min(total, panel.height * 0.62)
+      total += root.rowSize(root.rows[i])
+    return Math.min(total, panel.height * 0.6)
   }
   property int cardWidth: Math.min(Style.space(640), panel.width - Style.gapsOut * 2)
 
@@ -87,7 +107,9 @@ Item {
     }
     root.opened = true
     root.selectedIndex = 0
+    root.lastPointer = Qt.point(-1, -1)
     root.refreshZones()
+    root.refreshWindows()
     root.recompute()   // the kept query may be time-sensitive ("time", "3pm to tokyo")
     // Like Spotlight: the last query comes back selected, so typing replaces it
     // and an arrow key keeps it.
@@ -107,6 +129,14 @@ Item {
       root.shell.hide((root.manifest && root.manifest.id) || "io.github.saikomantisu.commandbar")
   }
 
+  // After an action (open, run, copy) the bar starts empty next time; only a
+  // plain close (Esc, clicking outside) keeps the query for later.
+  function finish() {
+    input.text = ""
+    root.selectedIndex = 0
+    root.dismiss()
+  }
+
   function toggle() {
     if (root.opened) root.dismiss()
     else root.open("{}")
@@ -122,9 +152,13 @@ Item {
       localZone: root.localZone,
       emojis: root.emojis,
       processes: root.processes,
+      apps: root.apps,
+      windows: root.windows,
+      launches: root.launches,
       requestProcesses: root.requestProcesses,
       requestRates: root.refreshRates
     })
+    root.mode = Engine.mode(input.text, root.config)
     if (root.selectedIndex >= root.rows.length) root.selectedIndex = Math.max(0, root.rows.length - 1)
     if (root.rows.length > 0) list.positionViewAtIndex(root.selectedIndex, ListView.Contain)
   }
@@ -153,21 +187,42 @@ Item {
     var row = root.rows[index]
     if (!row) return
     if (row.run) {
-      root.dismiss()
-      if (row.run.kind === "open") Quickshell.execDetached(["xdg-open", row.run.target])
+      root.finish()
+      if (row.run.kind === "app") root.launchApp(row.run.target, row.run.action)
+      else if (row.run.kind === "window") root.focusWindow(row.run.target)
+      else if (row.run.kind === "open") Quickshell.execDetached(["xdg-open", row.run.target])
       else Quickshell.execDetached(["bash", "-c", row.run.target])
       return
     }
     if (row.complete && !row.copy) { root.complete(row); return }
     if (!row.copy) return
-    root.dismiss()
+    root.finish()
     Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(row.copy) + " | wl-copy"])
   }
 
+  // What Enter does to a row, for the footer: "Open", "Switch", "Copy"…
   function actionLabel(row) {
-    if (row.run) return "↵ " + (row.run.label || (row.run.kind === "open" ? "open" : "run"))
-    if (row.complete && !row.copy) return "↵ try"
-    return row.copy ? "↵ copy" : ""
+    if (!row) return ""
+    if (row.actionLabel) return row.actionLabel
+    var label = ""
+    if (row.run) label = row.run.label || (row.run.kind === "open" ? "open" : "run")
+    else if (row.complete && !row.copy) label = "try it"
+    else if (row.copy) label = "copy"
+    return label ? label.charAt(0).toUpperCase() + label.slice(1) : ""
+  }
+
+  // Tab fills the query in when that's something other than what Enter does.
+  function canComplete(row) {
+    return !!row && !!row.complete && !!(row.run || row.copy)
+  }
+
+  // Inside a help topic ("?units") or a help search, Esc and Backspace go
+  // back to the list of topics instead of editing the text.
+  readonly property bool inHelpTopic: /^\s*\?\s*\S/.test(input.text)
+  function helpBack() {
+    input.text = "?"
+    input.cursorPosition = 1
+    root.selectedIndex = 0
   }
 
   onConfigChanged: {
@@ -203,8 +258,8 @@ Item {
     if (p.conflict && root.warnedConflict !== hotkey) {
       root.warnedConflict = hotkey
       console.warn("commandbar: " + hotkey + " is already used by \"" + p.conflict + "\"; not binding it")
-      Quickshell.execDetached(["notify-send", "-a", "Command Bar", "Command Bar hotkey not set",
-        hotkey + " is already used by “" + p.conflict + "”. Pick another \"hotkey\" in ~/.config/omarchy/extensions/commandbar.json."])
+      Quickshell.execDetached(["notify-send", "-a", "Command Bar", "Command Bar has no hotkey",
+        hotkey + " already opens \"" + p.conflict + "\". Set a different \"hotkey\" in ~/.config/omarchy/extensions/commandbar.json."])
     }
     if (root.hotkeyQueued) { root.hotkeyQueued = false; root.ensureHotkey() }
   }
@@ -450,7 +505,216 @@ Item {
     }
   }
 
+  // ---------------------------------------------------------------- apps
+
+  // Desktop entries, filtered like Omarchy's own launcher: NoDisplay entries
+  // and the ids in its launcher.hides are left out. Rebuilt whenever apps are
+  // installed or removed.
+  function rebuildApps() {
+    var list = []
+    var byId = {}
+    var values = DesktopEntries.applications.values || []
+    for (var i = 0; i < values.length; i++) {
+      var e = values[i]
+      var id = String(e.id || "")
+      if (!id || e.noDisplay || root.hiddenApps[id]) continue
+      var keywords = []
+      try { for (var k = 0; k < e.keywords.length; k++) keywords.push(String(e.keywords[k])) } catch (err) {}
+      var actions = []
+      try { for (var a = 0; a < e.actions.length; a++) actions.push({ index: a, name: String(e.actions[a].name || "") }) } catch (err) {}
+      byId[id] = e
+      list.push({
+        id: id,
+        name: String(e.name || id),
+        generic: String(e.genericName || ""),
+        comment: String(e.comment || ""),
+        keywords: keywords,
+        icon: String(e.icon || ""),
+        wmclass: String(e.startupClass || ""),
+        actions: actions
+      })
+    }
+    root.appEntries = byId
+    root.apps = list
+    if (root.opened) root.recompute()
+  }
+
+  // Started the way Omarchy's launcher starts apps: under uwsm, in their own
+  // scope, with gtk-launch resolving the entry. Actions ("New Window") have no
+  // gtk-launch form, so their parsed command runs under uwsm directly.
+  function launchApp(id, actionIndex) {
+    var entry = root.appEntries[id]
+    if (actionIndex !== undefined && actionIndex !== null) {
+      var action = entry && entry.actions ? entry.actions[actionIndex] : null
+      var cmd = action ? Array.prototype.slice.call(action.command || []) : []
+      if (cmd.length === 0) return
+      Quickshell.execDetached(["uwsm-app", "--"].concat(cmd))
+    } else {
+      Quickshell.execDetached(["uwsm-app", "--", "gtk-launch", id + ".desktop"])
+    }
+    var next = Object.assign({}, root.launches)
+    next[id] = (next[id] || 0) + 1
+    root.launches = next
+    Quickshell.execDetached(["mkdir", "-p", root.cacheDir])
+    launchesFile.setText(JSON.stringify(next))
+  }
+
+  function appIconSource(icon) {
+    var value = String(icon || "")
+    if (value.charAt(0) === "/") return "file://" + value
+    var themed = value ? Quickshell.iconPath(value, true) : ""
+    return themed || Quickshell.iconPath("application-x-executable", true)
+  }
+
+  Timer {
+    id: appsDebounce
+    interval: 300
+    onTriggered: root.rebuildApps()
+  }
+
+  Connections {
+    target: DesktopEntries.applications
+    function onValuesChanged() { appsDebounce.restart() }
+  }
+
+  Component.onCompleted: appsDebounce.restart()
+
+  FileView {
+    path: Quickshell.env("OMARCHY_PATH") + "/default/omarchy/launcher.hides"
+    watchChanges: true
+    printErrors: false
+    onLoaded: {
+      var next = {}
+      var lines = text().split("\n")
+      for (var i = 0; i < lines.length; i++) {
+        var id = lines[i].trim().replace(/\.desktop$/, "")
+        if (id) next[id] = true
+      }
+      root.hiddenApps = next
+      appsDebounce.restart()
+    }
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: launchesFile
+    path: root.cacheDir + "/launches.json"
+    printErrors: false
+    atomicWrites: true
+    onLoaded: {
+      try { root.launches = JSON.parse(text()) || {} } catch (e) { root.launches = {} }
+    }
+  }
+
+  // ---------------------------------------------------------------- windows
+
+  // Hyprland's windows, taken each time the bar opens. focusHistoryID orders
+  // them by recency (0 is the window you were just in).
+  function refreshWindows() {
+    if (!windowsProc.running) windowsProc.running = true
+  }
+
+  // The same dispatch Omarchy's launch-or-focus uses: the Lua form first,
+  // then the classic one. The address is checked to be Hyprland's hex form.
+  function focusWindow(address) {
+    if (!/^0x[0-9a-fA-F]+$/.test(String(address))) return
+    Quickshell.execDetached(["bash", "-c",
+      "hyprctl dispatch \"hl.dsp.focus({ window = \\\"address:$1\\\" })\" >/dev/null 2>&1 || hyprctl dispatch focuswindow \"address:$1\"",
+      "_", address])
+  }
+
+  Process {
+    id: windowsProc
+    command: ["hyprctl", "clients", "-j"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var out = []
+        try {
+          var list = JSON.parse(text)
+          for (var i = 0; i < list.length; i++) {
+            var c = list[i]
+            if (!c.mapped || c.hidden) continue
+            out.push({
+              address: String(c.address || ""),
+              cls: String(c["class"] || c.initialClass || ""),
+              title: String(c.title || ""),
+              workspace: String((c.workspace && c.workspace.name) || ""),
+              focus: typeof c.focusHistoryID === "number" ? c.focusHistoryID : 99
+            })
+          }
+        } catch (e) {
+          console.warn("commandbar: bad hyprctl clients output: " + e)
+        }
+        root.windows = out
+        if (root.opened) root.recompute()
+      }
+    }
+  }
+
   // ---------------------------------------------------------------- UI
+
+  // A key drawn as a small keycap, for the footer hints.
+  component Keycap: Rectangle {
+    id: cap
+    property string label: ""
+    property color foreground: Color.foreground
+    property string fontFamily: Style.font.family
+    property bool rounded: true
+    implicitWidth: Math.max(implicitHeight, capText.implicitWidth + Style.space(10))
+    implicitHeight: capText.implicitHeight + Style.space(4)
+    radius: rounded ? Style.space(4) : 0
+    color: Util.alpha(cap.foreground, 0.08)
+    border.width: 1
+    border.color: Util.alpha(cap.foreground, 0.18)
+
+    Text {
+      id: capText
+      anchors.centerIn: parent
+      text: cap.label
+      color: cap.foreground
+      opacity: 0.8
+      font.family: cap.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+  }
+
+  // A row's icon: the app's own image, or a font glyph on a soft tile.
+  component IconTile: Rectangle {
+    id: tileRoot
+    property string glyph: ""
+    property url imageSource: ""
+    property bool selected: false
+    property real size: Style.space(30)
+    property color foreground: Color.foreground
+    property color selectedText: Color.foreground
+    property string fontFamily: Style.font.family
+    readonly property bool hasImage: String(imageSource) !== ""
+    width: size
+    height: size
+    color: hasImage ? "transparent" : Util.alpha(selected ? selectedText : foreground, selected ? 0.16 : 0.07)
+
+    Image {
+      visible: tileRoot.hasImage
+      anchors.fill: parent
+      sourceSize.width: width * 2
+      sourceSize.height: height * 2
+      fillMode: Image.PreserveAspectFit
+      asynchronous: true
+      smooth: true
+      source: tileRoot.imageSource
+    }
+
+    Text {
+      visible: !tileRoot.hasImage
+      anchors.centerIn: parent
+      text: tileRoot.glyph
+      color: tileRoot.selected ? tileRoot.selectedText : tileRoot.foreground
+      opacity: tileRoot.selected ? 1 : 0.8
+      font.family: tileRoot.fontFamily
+      font.pixelSize: Math.round(tileRoot.size * 0.56)
+    }
+  }
 
   PanelWindow {
     id: panel
@@ -475,25 +739,28 @@ Item {
     BorderSurface {
       id: card
       width: root.cardWidth
-      height: contentTopInset + contentBottomInset + root.inputHeight
-        + (root.rows.length > 0 ? Style.spacing.md + 1 + Style.spacing.md + root.listHeight : 0)
+      height: contentTopInset + contentBottomInset + layout.implicitHeight
       radius: root.cornerRadius
       anchors.horizontalCenter: parent.horizontalCenter
-      y: Math.round(panel.height * 0.24)
+      y: Math.round(panel.height * 0.22)
       color: root.background
       borderSpec: root.borderSpec
       padding: root.contentMargin
+      Behavior on height { NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
 
       MouseArea { anchors.fill: parent; onClicked: {} }
 
       Column {
-        anchors.fill: parent
+        id: layout
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
         anchors.topMargin: card.contentTopInset
         anchors.rightMargin: card.contentRightInset
-        anchors.bottomMargin: card.contentBottomInset
         anchors.leftMargin: card.contentLeftInset
         spacing: Style.spacing.md
 
+        // ---------- search field ----------
         Item {
           width: parent.width
           height: root.inputHeight
@@ -501,24 +768,27 @@ Item {
           Text {
             id: promptGlyph
             anchors.left: parent.left
+            anchors.leftMargin: Style.space(4)
             anchors.verticalCenter: parent.verticalCenter
             text: "󰍉"
-            color: root.selectedText
+            color: root.foreground
+            opacity: 0.55
             font.family: root.fontFamily
-            font.pixelSize: Style.font.iconLarge
+            font.pixelSize: Math.round(root.inputFont * 1.05)
           }
 
           TextInput {
             id: input
             anchors.left: promptGlyph.right
             anchors.leftMargin: Style.spacing.md
-            anchors.right: parent.right
+            anchors.right: modeChip.visible ? modeChip.left : (helpHint.visible ? helpHint.left : parent.right)
+            anchors.rightMargin: Style.spacing.md
             anchors.verticalCenter: parent.verticalCenter
             color: root.foreground
             selectionColor: root.selectedBackground
             selectedTextColor: root.selectedText
             font.family: root.fontFamily
-            font.pixelSize: Style.font.heading
+            font.pixelSize: root.inputFont
             clip: true
             focus: true
             onTextChanged: {
@@ -530,22 +800,28 @@ Item {
               anchors.fill: parent
               verticalAlignment: Text.AlignVCenter
               visible: !input.text
-              text: "Calculate, convert, or type ? for help…"
+              text: "Search apps and windows, or type a sum"
               color: root.foreground
-              opacity: 0.45
+              opacity: 0.4
               font: input.font
+              elide: Text.ElideRight
             }
 
             Keys.priority: Keys.BeforeItem
             Keys.onPressed: function(event) {
               if (event.key === Qt.Key_Escape) {
-                if (input.text) input.text = ""
+                if (root.inHelpTopic) root.helpBack()
+                else if (input.text) input.text = ""
                 else root.dismiss()
                 event.accepted = true
               } else if (event.key === Qt.Key_Down || (event.key === Qt.Key_N && event.modifiers & Qt.ControlModifier)) {
                 root.move(1); event.accepted = true
               } else if (event.key === Qt.Key_Up || (event.key === Qt.Key_P && event.modifiers & Qt.ControlModifier)) {
                 root.move(-1); event.accepted = true
+              } else if (event.key === Qt.Key_Backspace && root.inHelpTopic && !input.selectedText
+                         && /^\s*\?[a-z]+$/.test(input.text) && root.showingHelp && !!root.rows[0].helpTopic
+                         && input.cursorPosition === input.text.length) {
+                root.helpBack(); event.accepted = true
               } else if (event.key === Qt.Key_Tab) {
                 var row = root.rows[root.selectedIndex]
                 if (row) root.complete(row)
@@ -555,16 +831,104 @@ Item {
               }
             }
           }
+
+          // The mode a prefix puts the bar in: Emoji, Windows, Search Google…
+          Rectangle {
+            id: modeChip
+            visible: !!root.mode
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            implicitWidth: chipRow.implicitWidth + Style.space(16)
+            implicitHeight: chipRow.implicitHeight + Style.space(8)
+            width: implicitWidth
+            height: implicitHeight
+            radius: root.cornerRadius > 0 ? height / 2 : 0
+            color: root.selectedBackground
+
+            Row {
+              id: chipRow
+              anchors.centerIn: parent
+              spacing: Style.space(6)
+
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.mode ? (root.mode.icon || "") : ""
+                visible: text !== ""
+                color: root.selectedText
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.mode ? root.mode.label : ""
+                color: root.selectedText
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+              }
+            }
+          }
+
+          Row {
+            id: helpHint
+            visible: !root.mode && !input.text
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(6)
+
+            Keycap { label: "?"; anchors.verticalCenter: parent.verticalCenter; foreground: root.foreground; fontFamily: root.fontFamily; rounded: root.cornerRadius > 0 }
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: "for help"
+              color: root.foreground
+              opacity: 0.45
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
         }
 
         Rectangle {
           width: parent.width
           height: 1
           color: root.foreground
-          opacity: 0.12
-          visible: root.rows.length > 0
+          opacity: 0.1
+          visible: root.rows.length > 0 || root.noResults
         }
 
+        // ---------- nothing matched ----------
+        Column {
+          width: parent.width
+          visible: root.noResults
+          spacing: Style.space(4)
+          topPadding: Style.spacing.md
+          bottomPadding: Style.spacing.md
+
+          Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            textFormat: Text.PlainText
+            text: "Nothing matches \"" + input.text.trim() + "\""
+            color: root.foreground
+            opacity: 0.8
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.subtitle
+            elide: Text.ElideMiddle
+          }
+
+          Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: "Type ? to see what the bar understands"
+            color: root.foreground
+            opacity: 0.45
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+        }
+
+        // ---------- results ----------
         ListView {
           id: list
           width: parent.width
@@ -580,12 +944,13 @@ Item {
             required property int index
             required property var modelData
             readonly property bool selected: index === root.selectedIndex
-            // Help rows can open a section ("Features", "Keywords"): a small
-            // heading drawn above the row, outside the selectable area.
+            readonly property bool hero: !!modelData.hero
+            // The first row of each group carries its label (Windows, Apps…),
+            // drawn above the row, outside the selectable area.
             readonly property string section: modelData.section || ""
 
             width: list.width
-            height: root.rowHeight + (section ? root.sectionHeight : 0)
+            height: root.rowSize(modelData)
 
             Text {
               visible: rowItem.section !== ""
@@ -594,43 +959,46 @@ Item {
               anchors.top: parent.top
               height: root.sectionHeight
               verticalAlignment: Text.AlignVCenter
-              text: rowItem.section.toUpperCase()
+              text: rowItem.section
               color: root.foreground
-              opacity: 0.45
+              opacity: 0.5
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
-              font.letterSpacing: 1
+              font.bold: true
+              font.letterSpacing: 0.4
             }
 
             Rectangle {
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.bottom: parent.bottom
-              height: root.rowHeight
-              radius: root.cornerRadius
+              height: rowItem.hero ? root.heroHeight : root.rowHeight
+              radius: root.cornerRadius > 0 ? Style.space(8) : 0
               color: rowItem.selected ? root.selectedBackground : "transparent"
+              Behavior on color { ColorAnimation { duration: 80 } }
 
-              Text {
-                id: rowIcon
+              IconTile {
+                id: tile
                 anchors.left: parent.left
                 anchors.leftMargin: Style.spacing.md
                 anchors.verticalCenter: parent.verticalCenter
-                width: Style.font.display
-                horizontalAlignment: Text.AlignHCenter
-                text: rowItem.modelData.icon || ""
-                color: rowItem.selected ? root.selectedText : root.foreground
-                opacity: rowItem.selected ? 1 : 0.7
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.iconLarge
+                glyph: rowItem.modelData.icon || ""
+                imageSource: rowItem.modelData.image ? root.appIconSource(rowItem.modelData.image) : ""
+                selected: rowItem.selected
+                size: rowItem.hero ? Math.round(root.tileSize * 1.4) : root.tileSize
+                radius: root.tileRadius
+                foreground: root.foreground
+                selectedText: root.selectedText
+                fontFamily: root.fontFamily
               }
 
               Column {
-                anchors.left: rowIcon.right
+                anchors.left: tile.right
                 anchors.leftMargin: Style.spacing.md
-                anchors.right: actionText.left
+                anchors.right: parent.right
                 anchors.rightMargin: Style.spacing.md
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(2)
+                spacing: rowItem.hero ? Style.space(4) : Style.space(2)
 
                 Text {
                   width: parent.width
@@ -638,8 +1006,8 @@ Item {
                   text: rowItem.modelData.title
                   color: rowItem.selected ? root.selectedText : root.foreground
                   font.family: root.fontFamily
-                  font.pixelSize: Style.font.heading
-                  font.bold: rowItem.index === 0 && !root.showingHelp
+                  font.pixelSize: rowItem.hero ? Style.font.displayLarge : Style.font.subtitle
+                  font.bold: rowItem.hero
                   elide: Text.ElideRight
                 }
 
@@ -648,33 +1016,28 @@ Item {
                   visible: text !== ""
                   textFormat: Text.PlainText
                   text: rowItem.modelData.subtitle || ""
-                  color: root.foreground
-                  opacity: 0.55
+                  color: rowItem.selected ? root.selectedText : root.foreground
+                  opacity: rowItem.selected ? 0.7 : 0.5
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
                   elide: Text.ElideRight
                 }
               }
 
-              Text {
-                id: actionText
-                anchors.right: parent.right
-                anchors.rightMargin: Style.spacing.md
-                anchors.verticalCenter: parent.verticalCenter
-                text: rowItem.selected ? root.actionLabel(rowItem.modelData) : ""
-                color: root.foreground
-                opacity: 0.5
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-
               MouseArea {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                // Only real pointer movement selects, so a result list that
-                // re-renders under a resting cursor doesn't steal the selection.
-                onPositionChanged: root.selectedIndex = rowItem.index
+                // Only real pointer movement selects: rows that slide under a
+                // resting cursor (the card growing, the list re-rendering)
+                // report positions too, but the window position stays put.
+                onPositionChanged: function(mouse) {
+                  var p = mapToItem(null, mouse.x, mouse.y)
+                  if (p.x === root.lastPointer.x && p.y === root.lastPointer.y) return
+                  var first = root.lastPointer.x < 0
+                  root.lastPointer = Qt.point(p.x, p.y)
+                  if (!first) root.selectedIndex = rowItem.index
+                }
                 onClicked: {
                   root.selectedIndex = rowItem.index
                   root.activate(rowItem.index)
@@ -682,6 +1045,84 @@ Item {
                 }
               }
             }
+          }
+        }
+
+        // ---------- footer: what the selected row is, and what the keys do ----------
+        Item {
+          width: parent.width
+          height: root.footerHeight
+          visible: root.rows.length > 0
+
+          Rectangle {
+            anchors.top: parent.top
+            width: parent.width
+            height: 1
+            color: root.foreground
+            opacity: 0.1
+          }
+
+          Row {
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(4)
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.verticalCenterOffset: 1
+            spacing: Style.space(6)
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.selectedRow ? (root.selectedRow.help ? "Help" : (root.selectedRow.group || root.selectedRow.providerName || "")) : ""
+              color: root.foreground
+              opacity: 0.5
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          Row {
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(4)
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.verticalCenterOffset: 1
+            spacing: Style.space(6)
+
+            Text {
+              visible: root.inHelpTopic
+              anchors.verticalCenter: parent.verticalCenter
+              text: "Back"
+              color: root.foreground
+              opacity: 0.55
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+            Keycap { visible: root.inHelpTopic; label: "Esc"; anchors.verticalCenter: parent.verticalCenter; foreground: root.foreground; fontFamily: root.fontFamily; rounded: root.cornerRadius > 0 }
+            Item { visible: root.inHelpTopic; width: Style.space(8); height: 1 }
+
+            Text {
+              visible: root.canComplete(root.selectedRow)
+              anchors.verticalCenter: parent.verticalCenter
+              text: "Fill in"
+              color: root.foreground
+              opacity: 0.55
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+            Keycap { visible: root.canComplete(root.selectedRow); label: "Tab"; anchors.verticalCenter: parent.verticalCenter; foreground: root.foreground; fontFamily: root.fontFamily; rounded: root.cornerRadius > 0 }
+
+            Item { visible: root.canComplete(root.selectedRow); width: Style.space(8); height: 1 }
+
+            Text {
+              id: primary
+              visible: text !== ""
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.actionLabel(root.selectedRow)
+              color: root.foreground
+              opacity: 0.85
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+            Keycap { visible: primary.text !== ""; label: "↵"; anchors.verticalCenter: parent.verticalCenter; foreground: root.foreground; fontFamily: root.fontFamily; rounded: root.cornerRadius > 0 }
           }
         }
       }

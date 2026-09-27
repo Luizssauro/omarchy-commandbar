@@ -305,13 +305,15 @@ var provider = {
   name: "Time",
   icon: "󰥔",
   commands: [
-    { title: "World Clock", keywords: "time zone zones timezone clock world now", text: "Current time in your zones", complete: "time" },
-    { title: "Convert Time Zone", keywords: "time zone timezone convert meeting", text: "e.g. 3pm lkt to pst", complete: "3pm to tokyo", select: true },
-    { title: "Date Calculator", keywords: "date dates days until since countdown calendar weekday", text: "Countdowns, date differences, date + n days", complete: "days until dec 25", select: true }
+    { title: "World clock", keywords: "time zone zones timezone clock world now", text: "The time now in your saved zones", complete: "time" },
+    { title: "Convert a time", keywords: "time zone timezone convert meeting", text: "3pm lkt to pst", complete: "3pm to tokyo", select: true },
+    { title: "Date calculator", keywords: "date dates days until since countdown calendar weekday", text: "Days until a date, or between two", complete: "days until dec 25", select: true }
   ],
   help: [
-    { title: "Time zones", examples: ["time", "time in tokyo", "3pm to new york"] },
-    { title: "Dates", icon: "󰃭", examples: ["days until dec 25", "today + 45 days", "next friday"] }
+    { id: "time", title: "Time zones", about: "The time anywhere, or a time converted between zones",
+      examples: ["time", "time in tokyo", "3pm to new york"] },
+    { id: "dates", title: "Dates", icon: "󰃭", about: "Days until a date, days between two, and weekdays",
+      examples: ["days until dec 25", "today + 45 days", "next friday"] }
   ],
   match: function(query, ctx) {
     var q = query.trim().toLowerCase().replace(/\s+/g, " ")

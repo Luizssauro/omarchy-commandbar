@@ -4,6 +4,12 @@ A Spotlight-style command bar for Omarchy. Press a hotkey and type. Results appe
 
 ![Command Bar showing its help list](preview.png)
 
+<p>
+  <img src="screenshots/apps.png" alt="Opening Brave or one of its actions" width="32%">
+  <img src="screenshots/windows.png" alt="Switching to an open window" width="32%">
+  <img src="screenshots/kill.png" alt="Quitting a process" width="32%">
+</p>
+
 ## What it does
 
 | Type | Result |
@@ -13,19 +19,26 @@ A Spotlight-style command bar for Omarchy. Press a hotkey and type. Results appe
 | `time`, `time in tokyo`, `3pm cet to pst` | Time zones |
 | `days until dec 25`, `today + 45 days`, `next friday` | Date calculations |
 | `:fire`, `emoji party` | Emoji search. Enter types the emoji into the app you were using |
+| `5 km to mi`, `72f`, `5 ft 11 in to cm`, `2 cups in ml` | Unit conversion: length, weight, temperature, volume, area, speed, data and time. Offline |
+| `brave`, `netflix`, `w `, `w github` | Switch to an open window, found by its app or its title. `w ` lists them all, most recent first |
+| `firefox`, `term`, `vsc`, `brave new window` | Open an installed app, or one of its actions like New Window. Only apps: nothing here changes a setting or a default |
 | `kill`, `kill chrome`, `kill -9 node` | Quit one of your processes, or all processes with that name |
 | `g …`, `yt …`, `gh …`, `wiki …`, `lock` | Keyword commands, which you can change in the config |
 
-Type part of a feature's name to find it: `emo` shows Search Emoji, `curr` shows Convert Currency. Type `?` to see everything.
+Type part of a feature's name to find it. `emo` finds Search emoji and `curr` finds Convert currency.
+
+Type `?` for help. It lists one topic per feature. Enter opens a topic, and each example in it shows the answer it would give, so `5 km to mi` reads `→ 3.1069 mi`. Enter on an example tries it. Esc goes back to the topics. Type words after the `?` to search the help, for example `?money`.
+
+Results come in groups (Windows, Apps, Calculator and so on). A sum or a conversion at the top shows in large type. The footer names the selected row's group and what Enter will do with it, such as Open, Switch or Copy.
 
 Keys:
 
-- Up/Down or Ctrl+N/P: move the selection
-- Enter: copy, open or run the selected row
-- Tab: complete a keyword
-- Esc: clear the text; press again to close
+- Up/Down or Ctrl+N/P moves the selection.
+- Enter copies, opens or runs the selected row.
+- Tab fills in the query for the selected row, for example a keyword and a space.
+- Esc clears the text. Press it again to close the bar.
 
-The bar remembers your last query. When you reopen it, the text is selected, so typing replaces it.
+After you copy, open or run something, the bar starts empty next time. If you close it without doing anything (Esc or clicking outside), it keeps your text, selected, so typing replaces it.
 
 ## Install
 
@@ -50,14 +63,15 @@ All of these come with Omarchy:
 - `xdg-open`: web keyword commands
 - `ps` and `kill` (from `procps-ng`): the process list
 - `date` and `timedatectl`: time zones
-- `hyprctl`: setting the hotkey
+- `uwsm-app` and `gtk-launch`: opening apps, the same way Omarchy's own launcher does
+- `hyprctl`: setting the hotkey, and listing and focusing windows
 - `notify-send`: warning when the hotkey is already taken
 - `omarchy-menu-emoji-insert` and Omarchy's `emojis.json`: emoji
 
 ### Network, files and processes
 
 - The only network request is to `https://open.er-api.com/v6/latest/USD`, made when you convert currency and the saved rates are out of date. The rates update once a day. What you type is not sent anywhere, except the text you search with a web keyword like `g`.
-- It writes only to `~/.cache/omarchy-commandbar/`: the saved rates and your last query. It does not change your Hyprland or Omarchy config files.
+- It writes only to `~/.cache/omarchy-commandbar/`: the saved rates, your last query, and how often you've opened each app from the bar (used to order equally good matches). It does not change your Hyprland or Omarchy config files.
 - It sets its hotkey in the running Hyprland with `hyprctl eval`, and sets it again after Hyprland reloads its config. The hotkey is removed when the plugin is disabled or removed.
 - It lists only your own processes, and quits one only when you press Enter on it.
 
@@ -79,7 +93,7 @@ Put your settings in `~/.config/omarchy/extensions/commandbar.json`. They overri
   // A Hyprland key combination. "" means no hotkey.
   "hotkey": "SUPER + PERIOD",
   // Features to turn on. When results score equally, earlier ones come first.
-  "providers": ["commands", "math", "currency", "time", "emoji", "processes"],
+  "providers": ["commands", "math", "currency", "time", "emoji", "processes", "units", "windows", "apps"],
   // Default home currency is USD.
   "currency": { "home": "EUR", "favorites": ["USD", "GBP"] },
   // Default home zone is your system time zone.

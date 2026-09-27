@@ -16,8 +16,28 @@ const processes = [
   { pid: 103, rss: 50000, cpu: 0.1, name: "Web Content", args: "/usr/lib/firefox/firefox -contentproc" },
   { pid: 104, rss: 90000, cpu: 20.0, name: "node", args: "node server.js" }
 ]
+const app = (id, name, generic, actions, keywords) => ({ id, name, generic: generic || "", comment: "", keywords: keywords || [], icon: id, actions: (actions || []).map((n, i) => ({ index: i, name: n })) })
+const apps = [
+  app("brave-browser", "Brave", "Web Browser", ["New Window", "New Private Window"]),
+  app("firefox", "Firefox", "Web Browser", ["New Window", "New Private Window"]),
+  app("org.gnome.Nautilus", "Files", "File Manager", [], ["folder", "explorer"]),
+  app("Alacritty", "Alacritty", "Terminal", [], ["shell", "prompt"]),
+  app("code", "Visual Studio Code", "Text Editor", ["New Empty Window"]),
+  app("org.localsend.localsend_app", "LocalSend", "File Sharing"),
+  app("signal", "Signal", "Messenger")
+]
+let launches = { "firefox": 12 }
+const windows = [
+  { address: "0xa1", cls: "firefox", title: "Mozilla Firefox", workspace: "2", focus: 0 },          // the one you're in: never listed
+  { address: "0xb1", cls: "brave-browser", title: "Netflix - Brave", workspace: "1", focus: 1 },
+  { address: "0xb2", cls: "brave-browser", title: "GitHub - Brave", workspace: "3", focus: 3 },
+  { address: "0xc1", cls: "org.gnome.Nautilus", title: "Images", workspace: "5", focus: 2 },
+  { address: "0xd1", cls: "com.mitchellh.ghostty", title: "~/Code", workspace: "special:scratch", focus: 4 },
+  { address: "$(rm -rf ~)", cls: "evil", title: "Evil window", workspace: "1", focus: 5 }
+]
 let requested = 0
-function q(query) { return Engine.run(query, config, { rates, zones, now, ratesStatus: "", emojis, processes, requestProcesses: () => requested++ }) }
+let openWindows = []   // the app tests run with nothing open; the window tests switch these on
+function q(query) { return Engine.run(query, config, { rates, zones, now, ratesStatus: "", emojis, processes, apps, windows: openWindows, launches, requestProcesses: () => requested++ }) }
 function expect(query, want) {
   const rows = q(query)
   const top = rows[0] ? rows[0].title : "(none)"
@@ -37,27 +57,72 @@ expect("days until dec 25", /^93 days/); expect("today + 45 days", "Sat, 7 Nov 2
 expect("days since jan 1", /^265 days/); expect("in 2 weeks", "Wed, 7 Oct 2026"); expect("until christmas", /^93 days/); expect("dec 25", "Fri, 25 Dec 2026")
 expect("g foo bar", "Search Google: foo bar"); expect("g", "Search Google…"); expect("lock", "Lock screen"); expect("lo", "Lock screen")
 // emoji
-expect(":fire", /fire/); expect("emoji thumbs up", /thumbs up/); expect(":", "Type to search emoji"); expect(":zzqx", null)
+expect(":fire", /fire/); expect("emoji thumbs up", /thumbs up/); expect(":", "Type a word after the colon"); expect(":zzqx", null)
 { const r = q(":fire")[0]; const ok = r.icon === "🔥" && r.copy === "🔥" && r.run.target === "omarchy-menu-emoji-insert '🔥'"
   console.log((ok ? "ok  " : "FAIL") + "  :fire row → " + r.icon + " " + r.run.target); if (!ok) fails++ }
 { const r = Engine.run(":fire", { providers: ["emoji"], emoji: { onEnter: "copy" } }, { emojis })[0]; const ok = !r.run && r.copy === "🔥"
   console.log((ok ? "ok  " : "FAIL") + "  emoji onEnter=copy → no run, copies " + r.copy); if (!ok) fails++ }
 // processes
-expect("kill", "Quit node"); expect("kill chrome", "Quit all 2 “chrome” processes"); expect("kill web", "Quit Web Content"); expect("kill zzz", /^No process/)
+expect("kill", "Quit node"); expect("kill chrome", "Quit all 2 \"chrome\" processes"); expect("kill web", "Quit Web Content"); expect("kill zzz", /^No process/)
 expect("kill -9 node", "Force quit node"); expect("killer", null)
 { const rows = q("kill chrome"); const ok = rows[0].run.target === "kill -TERM 101 102" && rows[1].run.target === "kill -TERM 101" && q("kill -9 node")[0].run.target === "kill -KILL 104" && requested > 0
   console.log((ok ? "ok  " : "FAIL") + "  kill targets → " + rows[0].run.target + " | " + q("kill -9 node")[0].run.target + " | requested " + requested); if (!ok) fails++ }
-{ const r = Engine.run("kill x", { providers: ["processes"] }, { requestProcesses: () => {} })[0]; const ok = r.title === "Loading processes…" && !r.run
+{ const r = Engine.run("kill x", { providers: ["processes"] }, { requestProcesses: () => {} })[0]; const ok = r.title === "Reading your processes…" && !r.run
   console.log((ok ? "ok  " : "FAIL") + "  kill before snapshot → " + r.title); if (!ok) fails++ }
 // Every kill target must be exactly "kill -SIG <digits…>" — nothing from args/names reaches the shell.
 { const all = ["kill", "kill chrome", "kill web", "kill -9 chrome"].flatMap(x => q(x)).filter(r => r.run)
   const ok = all.every(r => /^kill -(TERM|KILL)( \d+)+$/.test(r.run.target))
   console.log((ok ? "ok  " : "FAIL") + "  " + all.length + " kill targets are pid-only"); if (!ok) fails++ }
 
+// apps
+expect("brave", "Brave"); expect("firefox", "Firefox"); expect("fire", "Firefox"); expect("files", "Files"); expect("nautilus", "Files")
+expect("term", "Alacritty"); expect("vsc", "Visual Studio Code"); expect("studio code", "Visual Studio Code"); expect("local", "LocalSend")
+expect("brave new window", "New Window"); expect("firefox priv", "New Private Window"); expect("zzzq", null)
+{ const rows = q("brave"); const ok = rows[0].run.kind === "app" && rows[0].run.target === "brave-browser" && rows[0].run.action === undefined
+    && rows[1].title === "New Window" && rows[1].run.action === 0 && rows[2].title === "New Private Window" && rows[0].image === "brave-browser"
+  console.log((ok ? "ok  " : "FAIL") + "  \"brave\" → app, then its window actions → " + rows.slice(0, 3).map(r => r.title).join(" | ")); if (!ok) fails++ }
+// The point of the launcher: an app query never offers to change a default.
+{ const all = ["brave", "browser", "default", "firefox", "term"].flatMap(x => q(x))
+  const ok = all.every(r => !/default/i.test(r.title + " " + (r.run ? r.run.target : "")))
+  console.log((ok ? "ok  " : "FAIL") + "  no default-changing rows among " + all.length + " app results"); if (!ok) fails++ }
+{ const f = q("f").map(r => r.title); const ok = f[0] === "Firefox" && f.includes("Files")
+  console.log((ok ? "ok  " : "FAIL") + "  launch history orders equal matches → " + f.slice(0, 3).join(" | ")); if (!ok) fails++ }
+{ const ok = q("web browser").map(r => r.title).slice(0, 2).sort().join() === "Brave,Firefox" && q("2+2").length === 1 && q("100 usd to lkr")[0].title === "30,050 LKR"
+  console.log((ok ? "ok  " : "FAIL") + "  generic-name search, and apps stay out of answers"); if (!ok) fails++ }
+
+// units
+expect("5 km to mi", "3.1069 mi"); expect("5km in miles", "3.1069 mi"); expect("180 lb to kg", "81.6466 kg"); expect("72f", "22.2222 °C"); expect("100 c to f", "212 °F")
+expect("0 k to c", "-273.15 °C"); expect("5 ft 11 in to cm", "180.34 cm"); expect("5 in to cm", "12.7 cm"); expect("2 cups in ml", "473.1765 mL"); expect("90 min to hours", "1.5 h")
+expect("10 gb to mb", "10,000 MB"); expect("1 gib in mb", "1,073.7418 MB"); expect("60 mph", "96.5606 km/h"); expect("1,500 m to km", "1.5 km"); expect("1 acre to m2", "4,046.8564 m²")
+expect("5 min", null); expect("5 kg to km", null); expect("convert units", "Convert units")
+{ const r = q("5 km"); const ok = r[0].title === "3.1069 mi" && r[0].copy === "3.1069" && /5 km → mi · Length/.test(r[0].subtitle)
+  console.log((ok ? "ok  " : "FAIL") + "  \"5 km\" → counterpart, copies the bare number"); if (!ok) fails++ }
+{ const ok = q("in 2 weeks")[0].title === "Wed, 7 Oct 2026" && q("3pm lkt to pst")[0].title === "02:30 Los Angeles" && q("2026-01-01 to 2026-09-23")[0].provider === "time" && q("2+2")[0].title === "4"
+  console.log((ok ? "ok  " : "FAIL") + "  units leave dates, times and maths alone"); if (!ok) fails++ }
+
+// windows
+openWindows = windows
+{ const r = q("brave"); const t = r.slice(0, 4).map(x => x.title + "/" + (x.run ? x.run.kind + ":" + (x.run.label || "") : ""))
+  const ok = r[0].run.kind === "window" && r[0].run.target === "0xb1" && r[1].run.target === "0xb2" && r[2].run.kind === "app" && r[2].run.label === "open new" && r[0].image === "brave-browser"
+  console.log((ok ? "ok  " : "FAIL") + "  \"brave\" → its windows by recency, then open new → " + t.join(" | ")); if (!ok) fails++ }
+expect("netflix", "Netflix - Brave"); expect("images", "Images"); expect("nautilus", "Images"); expect("ghostty", "~/Code")
+{ const r = q("w "); const ok = r.map(x => x.run && x.run.target).join() === "0xb1,0xc1,0xb2,0xd1" && r[3].subtitle === "Ghostty · scratchpad"
+  console.log((ok ? "ok  " : "FAIL") + "  \"w \" → every other window, most recent first → " + r.map(x => x.title).join(" | ")); if (!ok) fails++ }
+expect("w git", "GitHub - Brave"); expect("w zzz", /^No window/)
+{ const ok = q("firefox")[0].run.kind === "app" && q("firefox")[0].run.label === "open new" && !q("mozilla").some(r => r.run && r.run.kind === "window")
+  console.log((ok ? "ok  " : "FAIL") + "  the window you're in isn't offered; its app says open new"); if (!ok) fails++ }
+{ const all = ["w ", "evil", "w evil", "brave"].flatMap(x => q(x)).filter(r => r.run && r.run.kind === "window")
+  const ok = all.every(r => /^0x[0-9a-f]+$/.test(r.run.target))
+  console.log((ok ? "ok  " : "FAIL") + "  " + all.length + " window targets are hex addresses only"); if (!ok) fails++ }
+{ const ok = q("signal")[0].run.label === "open" && q("w")[0] && q("w").every(r => !r.run || r.run.kind !== "window")
+  console.log((ok ? "ok  " : "FAIL") + "  apps without windows say open; bare \"w\" is a normal search"); if (!ok) fails++ }
+
+openWindows = []
+
 // Commands are found from the normal search box.
-expect("emo", "Search Emoji"); expect("curr", "Convert Currency"); expect("goo", "Search Google"); expect("kil", "Kill Process")
-expect("date", "Date Calculator"); expect("help", "Show All Commands"); expect("exchange", "Convert Currency")
-{ const rows = q("clock"); const ok = /Colombo/.test(rows[0].title) && rows.some(r => r.title === "World Clock" && r.complete === "time")
+expect("emo", "Search emoji"); expect("curr", "Convert currency"); expect("goo", "Search Google"); expect("kil", "Kill a process")
+expect("date", "Date calculator"); expect("help", "Show everything"); expect("exchange", "Convert currency")
+{ const rows = q("clock"); const ok = /Colombo/.test(rows[0].title) && rows.some(r => r.title === "World clock" && r.complete === "time")
   console.log((ok ? "ok  " : "FAIL") + "  \"clock\" → real answer first, World Clock command below"); if (!ok) fails++ }
 { const c = q("curr")[0]; const ok = c.complete === "100 usd to lkr" && c.select === true && !c.copy && !c.run
   console.log((ok ? "ok  " : "FAIL") + "  command row completes \"" + c.complete + "\" selected"); if (!ok) fails++ }
@@ -65,6 +130,22 @@ expect("date", "Date Calculator"); expect("help", "Show All Commands"); expect("
   console.log((ok ? "ok  " : "FAIL") + "  no duplicate command rows for exact keyword / current mode"); if (!ok) fails++ }
 { const ok = q("2+2")[0].title === "4" && q("2+2").length === 1
   console.log((ok ? "ok  " : "FAIL") + "  maths queries don't pull in commands"); if (!ok) fails++ }
+
+// Layout data: grouped sections, hero answers, the mode chip, plain subtitles.
+{ openWindows = windows
+  const b = q("brave"), sums = q("2+2"), fx = q("50 eur"), lo = q("lo")
+  openWindows = []
+  const ok = b[0].section === "Windows" && !b[1].section && b[2].section === "Apps" && !b[0].hero
+    && sums[0].hero && !sums[0].section
+    && fx[0].hero && fx[1].section === "Currency"
+    && lo[0].section === "Commands" && lo[1].section === "Apps" && q("lock")[0].subtitle === "Runs omarchy-system-lock"
+  console.log((ok ? "ok  " : "FAIL") + "  sections " + b.map(r => r.section || "·").join(",") + " | hero on answers only | " + q("lock")[0].subtitle); if (!ok) fails++ }
+{ const m = x => (Engine.mode(x, config) || {}).label || ""
+  const ok = m(":fire") === "Emoji" && m("kill ") === "Processes" && m("w git") === "Windows" && m("g cats") === "Search Google" && m("lock") === "" && m("2+2") === "" && m("w") === ""
+  console.log((ok ? "ok  " : "FAIL") + "  mode chip → " + [":fire", "kill ", "w git", "g cats"].map(m).join(" | ")); if (!ok) fails++ }
+expect("g foo bar", "Search Google: foo bar")
+{ const ok = q("g foo bar")[0].subtitle === "Opens google.com" && q("yt x")[0].subtitle === "Opens youtube.com"
+  console.log((ok ? "ok  " : "FAIL") + "  keyword rows say where they go → " + q("g foo bar")[0].subtitle); if (!ok) fails++ }
 
 // Shipped defaults are neutral: USD home currency, system time zone.
 { const svc = { rates, zones, now, localZone: "Europe/London", emojis, processes }
@@ -103,14 +184,32 @@ expect("date", "Date Calculator"); expect("help", "Show All Commands"); expect("
   ]
   for (const [name, ok] of checks) { console.log((ok ? "ok  " : "FAIL") + "  hotkey: " + name); if (!ok) fails++ } }
 
-const helpRows = q("?")
-const titles = helpRows.map(r => r.title)
-const helpOk = titles.join("|") === "Calculator|Currency|Time zones|Dates|Emoji|Kill process|g …|yt …|gh …|wiki …|lock"
-  && helpRows[0].section === "Features" && helpRows[6].section === "Keywords" && helpRows.filter(r => r.section).length === 2
-  && helpRows[0].complete === "12*8 + 15%" && helpRows[0].select && helpRows[4].complete === ":fire" && !helpRows[4].select
-  && helpRows[6].complete === "g " && helpRows.every(r => !r.copy && !r.run)
-console.log((helpOk ? "ok  " : "FAIL") + "  \"?\" help → " + titles.join(" | ")); if (!helpOk) fails++
-expect(" ? ", "Calculator"); expect("?x", null)
+// help: topics, a topic's examples with live answers, search, and quiet previews
+{ const top = q("?"), titles = top.map(r => r.title).join("|")
+  const ok = titles === "Open an app|Switch window|Calculator|Units|Currency|Time zones|Dates|Emoji|Kill a process|Keywords"
+    && top.every(r => r.help && !r.run && !r.copy && r.actionLabel === "Open") && top[2].complete === "?calc" && !top[0].section
+  console.log((ok ? "ok  " : "FAIL") + "  \"?\" → " + titles); if (!ok) fails++ }
+{ const u = q("?units"), sub = u.map(r => r.title + " " + r.subtitle)
+  const ok = u[0].section === "Units" && u[0].title === "5 km to mi" && u[0].subtitle === "→ 3.1069 mi" && u[0].complete === "5 km to mi" && u[0].select
+    && u.every(r => r.actionLabel === "Try it" && r.helpTopic === "units")
+  console.log((ok ? "ok  " : "FAIL") + "  \"?units\" → " + sub.slice(0, 2).join(" | ")); if (!ok) fails++ }
+{ const k = q("?kill"), e = q("?emoji"), c = q("?currency"), kw = q("?keywords")
+  const ok = k[0].subtitle === "Your processes, busiest first" && !k[0].select && k[0].complete === "kill "
+    && /^→ 🔥 fire/.test(e[1].subtitle) && /^→ .*EUR$/.test(c[0].subtitle)
+    && kw[0].title === "g" && kw[0].subtitle === "Search Google. Opens google.com" && kw[4].subtitle === "Lock screen. Runs omarchy-system-lock"
+  console.log((ok ? "ok  " : "FAIL") + "  notes for prefixes, live answers otherwise → " + [k[0].subtitle, e[1].subtitle, c[0].subtitle, kw[0].subtitle].join(" | ")); if (!ok) fails++ }
+{ const before = requested, asked = []
+  const svc = { rates, zones, now, emojis, processes, apps, windows: [], launches, requestProcesses: () => requested++, requestRates: () => asked.push(1) }
+  for (const x of ["?", "?kill", "?currency", "?units", "?time", "?money"]) Engine.run(x, config, svc)
+  const ok = requested === before && asked.length === 0
+  console.log((ok ? "ok  " : "FAIL") + "  browsing help never lists processes or fetches rates"); if (!ok) fails++ }
+{ const m = q("?in"), none = q("?zzqx")
+  const ok = m.some(r => r.helpTopic === "time") && m.some(r => r.helpTopic === "units") && none.length === 1 && /^No help matches/.test(none[0].title)
+  console.log((ok ? "ok  " : "FAIL") + "  help search spans topics; misses say so"); if (!ok) fails++ }
+{ const m = x => (Engine.mode(x, config) || {}).label
+  const ok = m("?") === "Help" && m("?units") === "Help · Units" && m("?mon") === "Help"
+  console.log((ok ? "ok  " : "FAIL") + "  help chip → " + [m("?"), m("?units")].join(" | ")); if (!ok) fails++ }
+expect(" ? ", "Open an app")
 const r = q("g foo & bar")[0].run; console.log("      url:", r.target)
 const cmds = Engine.run("x it's; rm -rf ~", { providers: ["commands"], commands: [{ keyword: "x", run: "echo {q}" }] }, {})[0].run
 console.log("      cmd:", cmds.target)

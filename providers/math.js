@@ -226,10 +226,11 @@ var provider = {
   name: "Calculator",
   icon: "󰃬",
   commands: [
-    { title: "Calculator", keywords: "calculate calc math maths sum arithmetic", text: "Arithmetic, percentages, powers, functions", complete: "12*8 + 15%", select: true }
+    { title: "Calculator", keywords: "calculate calc math maths sum arithmetic", text: "Sums, percentages, powers, sqrt, pi", complete: "12*8 + 15%", select: true }
   ],
   help: [
-    { title: "Calculator", examples: ["12*8 + 15%", "sqrt(2) * pi", "15% of 200"] }
+    { id: "calc", title: "Calculator", about: "Sums, percentages, powers, sqrt and pi",
+      examples: ["12*8 + 15%", "sqrt(2) * pi", "15% of 200", "5!"] }
   ],
   match: function(query, ctx) {
     var text = query.replace(/=\s*$/, "")

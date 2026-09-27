@@ -1,6 +1,6 @@
 {
   "hotkey": "SUPER + PERIOD",
-  "providers": ["commands", "math", "currency", "time", "emoji", "processes"],
+  "providers": ["commands", "math", "currency", "time", "emoji", "processes", "units", "windows", "apps"],
   "math": { "precision": 10 },
   "currency": { "home": "USD", "favorites": ["EUR", "GBP"] },
   "emoji": { "onEnter": "paste" },

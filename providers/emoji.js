@@ -31,10 +31,11 @@ var provider = {
   name: "Emoji",
   icon: "󰞅",
   commands: [
-    { title: "Search Emoji", keywords: "emoji emojis emoticon smiley symbols", text: "Type : then a word", complete: ":" }
+    { title: "Search emoji", keywords: "emoji emojis emoticon smiley symbols", text: "Type : then a word", complete: ":" }
   ],
   help: [
-    { title: "Emoji", examples: [":fire", "emoji party"], exact: true }
+    { id: "emoji", title: "Emoji", about: "A colon and a word. Enter types the emoji into your app",
+      examples: [{ q: ":", note: "Start an emoji search" }, ":fire", "emoji party"] }
   ],
   match: function(query, ctx) {
     var m = query.match(/^\s*(?::|emoji\s+|emoji$)\s*(.*)$/i)
@@ -42,7 +43,7 @@ var provider = {
     var needle = m[1].trim().toLowerCase()
     var list = ctx.emojis || []
     if (list.length === 0) return [{ title: "Loading emoji…", subtitle: "Emoji", score: 40, copy: "" }]
-    if (!needle) return [{ title: "Type to search emoji", subtitle: "e.g. :fire, :thumbs up, :party", score: 40, copy: "" }]
+    if (!needle) return [{ title: "Type a word after the colon", subtitle: ":fire, :thumbs up, :party", score: 40, copy: "" }]
 
     var paste = !(ctx.settings && ctx.settings.onEnter === "copy")
     var hits = []
@@ -61,7 +62,7 @@ var provider = {
       out.push({
         icon: e.e,
         title: String(e.k).split(" ").slice(0, 5).join(" "),
-        subtitle: paste ? "Enter to type it · " + e.e : "Enter to copy · " + e.e,
+        subtitle: String(e.k).split(" ").slice(5).join(" "),
         score: 96 - j * 0.01,
         copy: e.e,
         run: paste ? { kind: "run", target: "omarchy-menu-emoji-insert " + shellQuote(e.e), label: "type" } : null

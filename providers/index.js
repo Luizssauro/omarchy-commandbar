@@ -5,6 +5,9 @@
 .import "time.js" as Time
 .import "emoji.js" as Emoji
 .import "processes.js" as Processes
+.import "apps.js" as Apps
+.import "units.js" as Units
+.import "windows.js" as Windows
 
 // Every provider the bar knows about. To add a feature: write providers/<name>.js
 // exporting `var provider = { id, name, icon, match(query, ctx) }`, import it
@@ -15,5 +18,8 @@ var all = [
   Currency.provider,
   Time.provider,
   Emoji.provider,
-  Processes.provider
+  Processes.provider,
+  Units.provider,
+  Windows.provider,
+  Apps.provider
 ]

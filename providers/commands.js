@@ -12,6 +12,15 @@ function shellQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'" }
 
 function takesQuery(cmd) { return /\{q\}/.test(cmd.open || cmd.run || "") }
 
+// What a row will do, said plainly: the site it opens or the command it runs.
+function describe(target) {
+  if (target.kind === "open") {
+    var host = String(target.target).match(/^[a-z]+:\/\/(?:www\.)?([^\/?#]+)/i)
+    return "Opens " + (host ? host[1] : target.target)
+  }
+  return "Runs " + target.target
+}
+
 function build(cmd, q) {
   if (cmd.open) return { kind: "open", target: cmd.open.replace(/\{q\}/g, encodeURIComponent(q)) }
   if (cmd.run) return { kind: "run", target: cmd.run.replace(/\{q\}/g, shellQuote(q)) }
@@ -22,24 +31,19 @@ var provider = {
   id: "commands",
   name: "Commands",
   icon: "󰘳",
-  // Listed under "Keywords" in the ? menu, one row per configured keyword.
-  helpSection: "Keywords",
+  // One help topic listing every configured keyword and what it does.
   help: function(ctx) {
     var list = Array.isArray(ctx.settings) ? ctx.settings : []
-    var out = []
+    var examples = []
     for (var i = 0; i < list.length; i++) {
       var cmd = list[i]
       if (!cmd || !cmd.keyword || !(cmd.open || cmd.run)) continue
       var kw = String(cmd.keyword)
-      out.push({
-        title: takesQuery(cmd) ? kw + " …" : kw,
-        text: cmd.title || kw,
-        examples: [takesQuery(cmd) ? kw + " " : kw],
-        exact: true,
-        icon: cmd.icon || (cmd.open ? "󰖟" : "󰘳")
-      })
+      var what = describe(build(cmd, "{q}"))
+      examples.push({ q: takesQuery(cmd) ? kw + " " : kw, note: (cmd.title || kw) + ". " + what.replace(/%7Bq%7D|'\{q\}'/g, "…") })
     }
-    return out
+    if (examples.length === 0) return []
+    return [{ id: "keywords", title: "Keywords", icon: "󰌌", about: "Your shortcuts, set in commandbar.json", examples: examples }]
   },
   // Searchable by keyword and title: "goo" finds Search Google, "lo" finds Lock screen.
   commands: function(ctx) {
@@ -52,7 +56,7 @@ var provider = {
       out.push({
         title: cmd.title || kw,
         keywords: kw + " " + (cmd.keywords || ""),
-        text: "Keyword “" + kw + "”",
+        text: "Keyword \"" + kw + "\"",
         icon: cmd.icon || (cmd.open ? "󰖟" : "󰘳"),
         complete: takesQuery(cmd) ? kw + " " : "",
         run: takesQuery(cmd) ? null : build(cmd, "")
@@ -79,12 +83,14 @@ var provider = {
       if (word === kw) {
         if (takesQuery(cmd)) {
           if (!rest) {
-            out.push({ title: title + "…", subtitle: "Type what to search for after “" + kw + " ”", score: 95, icon: icon, copy: "" })
+            out.push({ title: title + "…", subtitle: "Type your search after \"" + kw + " \"", score: 95, icon: icon, copy: "" })
           } else {
-            out.push({ title: title + ": " + rest, subtitle: cmd.open ? "Enter to open" : "Enter to run", score: 98, icon: icon, copy: rest, run: build(cmd, rest) })
+            var withQuery = build(cmd, rest)
+            out.push({ title: title + ": " + rest, subtitle: describe(withQuery), score: 98, icon: icon, copy: rest, run: withQuery })
           }
         } else if (!rest) {
-          out.push({ title: title, subtitle: "Enter to " + (cmd.open ? "open" : "run") + " · " + kw, score: 98, icon: icon, copy: "", run: build(cmd, "") })
+          var plain = build(cmd, "")
+          out.push({ title: title, subtitle: describe(plain), score: 98, icon: icon, copy: "", run: plain })
         }
       }
     }

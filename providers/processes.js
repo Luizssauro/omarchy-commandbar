@@ -18,10 +18,12 @@ var provider = {
   name: "Processes",
   icon: "󰅙",
   commands: [
-    { title: "Kill Process", keywords: "kill quit process processes force end task manager", text: "Quit a running app or process", complete: "kill " }
+    { title: "Kill a process", keywords: "kill quit process processes force end task manager", text: "Stop an app, or every process it started", complete: "kill " }
   ],
   help: [
-    { title: "Kill process", examples: ["kill ", "kill chrome", "kill -9 node"], exact: true }
+    { id: "kill", title: "Kill a process", about: "Quit an app, or every process it started",
+      examples: [{ q: "kill ", note: "Your processes, busiest first" }, { q: "kill chrome", note: "Quits every chrome process" },
+                 { q: "kill -9 node", note: "Force quit, for an app that hangs" }] }
   ],
   match: function(query, ctx) {
     var m = query.match(/^\s*kill(?:\s+(-9|-KILL|--force))?(?:\s+(.*))?$/i)
@@ -31,7 +33,7 @@ var provider = {
     if (ctx.requestProcesses) ctx.requestProcesses()
 
     var list = ctx.processes
-    if (!list) return [{ title: "Loading processes…", subtitle: "Processes", score: 40, copy: "" }]
+    if (!list) return [{ title: "Reading your processes…", subtitle: "Processes", score: 40, copy: "" }]
 
     var signal = force ? "-KILL" : "-TERM"
     var verb = force ? "Force quit" : "Quit"
@@ -42,7 +44,7 @@ var provider = {
       var r = !needle ? 1 : name === needle ? 3 : name.indexOf(needle) === 0 ? 2 : (name + " " + p.args.toLowerCase()).indexOf(needle) !== -1 ? 1 : 0
       if (r > 0) hits.push({ p: p, r: r })
     }
-    if (hits.length === 0) return [{ title: needle ? "No process matches “" + needle + "”" : "No processes found", subtitle: "Processes", score: 40, copy: "" }]
+    if (hits.length === 0) return [{ title: needle ? "No process matches \"" + needle + "\"" : "No processes found", subtitle: "Processes", score: 40, copy: "" }]
     hits.sort(function(a, b) { return b.r - a.r || b.p.cpu - a.p.cpu || b.p.rss - a.p.rss })
 
     var out = []
@@ -55,7 +57,7 @@ var provider = {
         var rss = 0, pids = []
         for (var g = 0; g < group.length; g++) { rss += group[g].p.rss; pids.push(group[g].p.pid) }
         out.push({
-          title: verb + " all " + group.length + " “" + hits[0].p.name + "” processes",
+          title: verb + " all " + group.length + " \"" + hits[0].p.name + "\" processes",
           subtitle: megabytes(rss) + " total · pids " + pids.slice(0, 6).join(", ") + (pids.length > 6 ? "…" : ""),
           score: 97,
           copy: "",
