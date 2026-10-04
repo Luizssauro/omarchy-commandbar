@@ -1,6 +1,6 @@
 # Command Bar
 
-A Spotlight-style command bar for Omarchy. Press a hotkey and type. Results appear as you type, and Enter copies or runs the selected one.
+Spotlight-style command bar - app launcher, calculator, currency, time zones, date maths, emoji, kill process and your own keyword commands
 
 ![Command Bar: Spotlight-style command bar for Omarchy](preview.png)
 
