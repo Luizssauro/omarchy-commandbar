@@ -76,12 +76,14 @@ All of these come with Omarchy:
 - `uwsm-app` and `gtk-launch`: opening apps, the same way Omarchy's own launcher does
 - `hyprctl`: setting the hotkey, and listing and focusing windows
 - `notify-send`: warning when the hotkey is already taken
+- `python3`: reading and writing the cache files safely (`bin/commandbar-cache`)
 - `omarchy-menu-emoji-insert` and Omarchy's `emojis.json`: emoji
 
 ### Network, files and processes
 
 - The only network request is to `https://open.er-api.com/v6/latest/USD`, made when you convert currency and the saved rates are out of date. The rates update once a day. What you type is not sent anywhere, except the text you search with a web keyword like `g`.
 - It writes only to `~/.cache/omarchy-commandbar/`: the saved rates, your last query, and how often you've opened each app from the bar (used to order equally good matches). It does not change your Hyprland or Omarchy config files.
+- The cache files are read and written only through `bin/commandbar-cache`. It refuses symlinks, hard links, files you don't own and files over a size limit (4 KiB for the last query, 64 KiB for app counts, 256 KiB for rates), and saves each file through a private temporary file.
 - It sets its hotkey in the running Hyprland with `hyprctl eval`, and sets it again after Hyprland reloads its config. The hotkey is removed when the plugin is disabled or removed.
 - It lists only your own processes, and quits one only when you press Enter on it.
 

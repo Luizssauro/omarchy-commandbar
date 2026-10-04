@@ -215,4 +215,54 @@ const cmds = Engine.run("x it's; rm -rf ~", { providers: ["commands"], commands:
 console.log("      cmd:", cmds.target)
 const out = require("child_process").execFileSync("bash", ["-c", cmds.target]).toString().trim()
 console.log((out === "it's; rm -rf ~" ? "ok  " : "FAIL") + "  shell quoting → " + out); if (out !== "it's; rm -rf ~") fails++
+// An emoji with quotes and shell syntax reaches the insert script and wl-copy
+// unchanged, and nothing in it runs. Both tools are stubs that record what they got.
+{ const fs = require("fs"), os = require("os"), { execFileSync } = require("child_process")
+  const dir = fs.mkdtempSync(os.tmpdir() + "/commandbar-emoji-")
+  const evil = "x'; touch \"" + dir + "/pwned\"; echo '$(touch " + dir + "/pwned2)`touch " + dir + "/pwned3`"
+  fs.writeFileSync(dir + "/omarchy-menu-emoji-insert", "#!/bin/bash\nprintf %s \"$1\" > \"$STUBS/typed\"\n", { mode: 0o755 })
+  fs.writeFileSync(dir + "/wl-copy", "#!/bin/bash\ncat > \"$STUBS/copied\"\n", { mode: 0o755 })
+  const row = Engine.run(":evil", { providers: ["emoji"], emoji: { onEnter: "paste" } }, { emojis: [{ e: evil, k: "evil" }] })[0]
+  execFileSync("bash", ["-c", row.run.target], { env: Object.assign({}, process.env, { PATH: dir + ":" + process.env.PATH, STUBS: dir }) })
+  const typed = fs.readFileSync(dir + "/typed", "utf8"), copied = fs.readFileSync(dir + "/copied", "utf8")
+  const ran = ["pwned", "pwned2", "pwned3"].filter(f => fs.existsSync(dir + "/" + f))
+  const ok = typed === evil && copied === evil && ran.length === 0
+  fs.rmSync(dir, { recursive: true, force: true })
+  console.log((ok ? "ok  " : "FAIL") + "  emoji is typed and copied as data" + (ran.length ? " (ran: " + ran.join(", ") + ")" : "")); if (!ok) fails++ }
+
+// bin/commandbar-cache, run against a throwaway HOME.
+{ const fs = require("fs"), os = require("os"), { spawnSync } = require("child_process")
+  const home = fs.mkdtempSync(os.tmpdir() + "/commandbar-home-"), dir = home + "/.cache/omarchy-commandbar"
+  const cache = (args, input) => spawnSync("python3", [P + "bin/commandbar-cache"].concat(args), { input: input || "", env: Object.assign({}, process.env, { HOME: home }) })
+  const check = (name, ok) => { console.log((ok ? "ok  " : "FAIL") + "  cache: " + name); if (!ok) fails++ }
+  const read = name => { const r = cache(["read", name]); return r.status === 0 ? r.stdout.toString() : null }
+
+  check("a missing file reads as empty", read("last-query") === "")
+  check("write then read", cache(["write", "last-query"], "brave").status === 0 && read("last-query") === "brave")
+  check("the directory is private and the file is 0600", (fs.statSync(dir).mode & 0o777) === 0o700 && (fs.statSync(dir + "/last-query").mode & 0o777) === 0o600)
+  check("JSON is written", cache(["write", "launches.json"], '{"firefox":3}').status === 0 && read("launches.json") === '{"firefox":3}')
+  check("invalid JSON is refused and the old file kept", cache(["write", "launches.json"], "{nope").status === 1 && read("launches.json") === '{"firefox":3}')
+  check("a write over the cap is refused", cache(["write", "last-query"], "x".repeat(4097)).status === 1 && read("last-query") === "brave")
+  check("a rates download over 256 KiB is refused", cache(["write", "rates.json"], '"' + "x".repeat(256 * 1024) + '"').status === 1)
+  check("unknown files are refused", cache(["read", "../../.bashrc"]).status === 2 && cache(["write", "other.json"], "{}").status === 2)
+
+  fs.writeFileSync(dir + "/launches.json", "{" + " ".repeat(64 * 1024) + "}")
+  check("an oversized file is refused without being read", read("launches.json") === null)
+
+  const target = home + "/target"
+  fs.writeFileSync(target, "precious")
+  fs.rmSync(dir + "/last-query"); fs.symlinkSync(target, dir + "/last-query")
+  check("a symlink is neither read nor written through", read("last-query") === null && cache(["write", "last-query"], "evil").status === 1 && fs.readFileSync(target, "utf8") === "precious")
+  fs.rmSync(dir + "/last-query"); fs.linkSync(target, dir + "/last-query")
+  check("a hard link is neither read nor written through", read("last-query") === null && cache(["write", "last-query"], "evil").status === 1 && fs.readFileSync(target, "utf8") === "precious")
+  fs.rmSync(dir + "/last-query")
+
+  fs.chmodSync(dir, 0o777)
+  check("a directory others can write to is refused", read("last-query") === null)
+  fs.chmodSync(dir, 0o700)
+  fs.rmSync(dir, { recursive: true }); fs.symlinkSync(home, dir)
+  check("a symlinked directory is refused", read("last-query") === null)
+  check("no temporary files are left behind", fs.readdirSync(home).every(f => !f.endsWith(".tmp")))
+  fs.rmSync(home, { recursive: true, force: true }) }
+
 console.log(fails ? fails + " FAILED" : "all passed"); process.exit(fails ? 1 : 0)

@@ -25,7 +25,6 @@ Item {
   readonly property string home: Quickshell.env("HOME")
   readonly property string pluginDir: String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/$/, "")
   readonly property string userConfigPath: home + "/.config/omarchy/extensions/commandbar.json"
-  readonly property string cacheDir: home + "/.cache/omarchy-commandbar"
   readonly property string ratesUrl: "https://open.er-api.com/v6/latest/USD"
   readonly property int ratesMaxBytes: 256 * 1024
 
@@ -361,7 +360,7 @@ Item {
       }
       root.ratesStatus = ""
     } catch (e) {
-      console.warn("commandbar: bad rates cache: " + e)
+      if (raw) console.warn("commandbar: bad rates cache: " + e)
     }
     if (root.opened) root.recompute()
   }
@@ -369,53 +368,86 @@ Item {
   // ---------------------------------------------------------------- last query
 
   // Kept in memory between opens (the plugin stays loaded) and written to the
-  // cache on close so it also survives a shell restart.
+  // cache on close so it also survives a shell restart. Long queries are cut
+  // so they stay under the helper's 4 KiB cap.
   property bool lastQueryLoaded: false
+  property string savedQuery: ""
 
   function saveLastQuery() {
-    if (!root.lastQueryLoaded || lastQueryFile.text() === input.text) return
-    Quickshell.execDetached(["mkdir", "-p", root.cacheDir])
-    lastQueryFile.setText(input.text)
+    var text = input.text.slice(0, 1000)
+    if (!root.lastQueryLoaded || root.savedQuery === text) return
+    root.savedQuery = text
+    root.cacheWrite("last-query", text)
   }
 
-  FileView {
-    id: lastQueryFile
-    path: root.cacheDir + "/last-query"
-    printErrors: false
-    atomicWrites: true
-    onLoaded: {
-      if (!root.lastQueryLoaded && !input.text) input.text = text().replace(/\n+$/, "")
-      root.lastQueryLoaded = true
-    }
-    onLoadFailed: root.lastQueryLoaded = true
-  }
-
-  FileView {
-    id: ratesFile
-    path: root.cacheDir + "/rates.json"
-    watchChanges: true
-    printErrors: false
-    onLoaded: root.loadRates(text())
-    onFileChanged: reload()
+  function loadLastQuery(text) {
+    root.savedQuery = text
+    if (!root.lastQueryLoaded && !input.text) input.text = text.replace(/\n+$/, "")
+    root.lastQueryLoaded = true
   }
 
   Process {
     id: ratesProc
-    // Size-capped download: curl aborts past the limit, head cuts the stream even
-    // without a Content-Length, and anything over the limit is discarded before
-    // it reaches rates.json (and so FileView / JSON.parse).
+    // Size-capped download: curl aborts past the limit and head cuts the stream
+    // even without a Content-Length. Only a complete download reaches the
+    // helper, which refuses anything over the cap or that isn't JSON, so the
+    // last good rates.json stays in place.
     command: ["bash", "-c",
-      "set -o pipefail; t=\"$1/rates.json.tmp\"; " +
-      "mkdir -p \"$1\" && curl -fsS --max-time 8 --max-filesize \"$3\" \"$2\" | head -c \"$(($3 + 1))\" > \"$t\" " +
-      "&& [ \"$(stat -c %s \"$t\")\" -le \"$3\" ] && mv \"$t\" \"$1/rates.json\" || { rm -f \"$t\"; exit 1; }",
-      "_", root.cacheDir, root.ratesUrl, String(root.ratesMaxBytes)]
+      "set -o pipefail; d=$(curl -fsS --max-time 8 --max-filesize \"$3\" \"$2\" | head -c \"$(($3 + 1))\") " +
+      "&& printf '%s' \"$d\" | python3 \"$1\" write rates.json",
+      "_", root.cacheHelper, root.ratesUrl, String(root.ratesMaxBytes)]
     onExited: function(exitCode) {
       if (exitCode !== 0) {
         root.ratesStatus = root.rates ? "" : "Couldn't reach open.er-api.com"
         if (root.opened) root.recompute()
       } else {
-        ratesFile.reload()
+        root.cacheRead("rates.json", root.loadRates)
       }
+    }
+  }
+
+  // ---------------------------------------------------------------- cache files
+
+  // The shell never opens the cache files itself: bin/commandbar-cache does
+  // every read and write, refusing symlinks, foreign or oversized files, and
+  // replacing a file atomically through a private temporary file. Requests run
+  // one at a time, in order.
+  readonly property string cacheHelper: root.pluginDir + "/bin/commandbar-cache"
+  property var cacheQueue: []
+  property var cacheDone: null
+
+  function cacheRead(name, done) {
+    root.cacheQueue.push({ command: ["python3", root.cacheHelper, "read", name], done: done })
+    if (!cacheProc.running) root.cacheNext()
+  }
+
+  // The content goes in on stdin, as its own argument to bash, never as code.
+  function cacheWrite(name, text) {
+    root.cacheQueue.push({ command: ["bash", "-c", "printf '%s' \"$1\" | python3 \"$2\" write \"$3\"",
+                                     "_", text, root.cacheHelper, name], done: null })
+    if (!cacheProc.running) root.cacheNext()
+  }
+
+  function cacheNext() {
+    if (root.cacheQueue.length === 0) return
+    var next = root.cacheQueue.shift()
+    root.cacheDone = next.done
+    cacheProc.command = next.command
+    cacheProc.running = true
+  }
+
+  Process {
+    id: cacheProc
+    stdout: StdioCollector { id: cacheOut; waitForEnd: true }
+    stderr: StdioCollector {
+      onStreamFinished: if (text.trim() !== "") console.warn("commandbar: " + text.trim())
+    }
+    onExited: function(exitCode) {
+      var done = root.cacheDone
+      root.cacheDone = null
+      // A refused or failed read counts as an empty file.
+      if (done) done(exitCode === 0 ? String(cacheOut.text || "") : "")
+      root.cacheNext()
     }
   }
 
@@ -557,8 +589,7 @@ Item {
     var next = Object.assign({}, root.launches)
     next[id] = (next[id] || 0) + 1
     root.launches = next
-    Quickshell.execDetached(["mkdir", "-p", root.cacheDir])
-    launchesFile.setText(JSON.stringify(next))
+    root.cacheWrite("launches.json", JSON.stringify(next))
   }
 
   function appIconSource(icon) {
@@ -579,7 +610,12 @@ Item {
     function onValuesChanged() { appsDebounce.restart() }
   }
 
-  Component.onCompleted: appsDebounce.restart()
+  Component.onCompleted: {
+    appsDebounce.restart()
+    root.cacheRead("last-query", root.loadLastQuery)
+    root.cacheRead("launches.json", root.loadLaunches)
+    root.cacheRead("rates.json", root.loadRates)
+  }
 
   FileView {
     path: Quickshell.env("OMARCHY_PATH") + "/default/omarchy/launcher.hides"
@@ -598,14 +634,14 @@ Item {
     onFileChanged: reload()
   }
 
-  FileView {
-    id: launchesFile
-    path: root.cacheDir + "/launches.json"
-    printErrors: false
-    atomicWrites: true
-    onLoaded: {
-      try { root.launches = JSON.parse(text()) || {} } catch (e) { root.launches = {} }
-    }
+  // Only whole-number counts are kept, whatever the file holds.
+  function loadLaunches(text) {
+    var data = {}
+    try { data = JSON.parse(text) || {} } catch (e) {}
+    var next = {}
+    if (data && typeof data === "object" && !Array.isArray(data))
+      for (var id in data) if (Number.isInteger(data[id]) && data[id] > 0) next[id] = data[id]
+    root.launches = next
   }
 
   // ---------------------------------------------------------------- windows
