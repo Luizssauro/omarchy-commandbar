@@ -34,7 +34,7 @@ var provider = {
     { title: "Search emoji", keywords: "emoji emojis emoticon smiley symbols", text: "Type : then a word", complete: ":" }
   ],
   help: [
-    { id: "emoji", title: "Emoji", about: "A colon and a word. Enter types the emoji into your app",
+    { id: "emoji", title: "Emoji", about: "A colon and a word. Enter types the emoji into your app and copies it",
       examples: [{ q: ":", note: "Start an emoji search" }, ":fire", "emoji party"] }
   ],
   match: function(query, ctx) {
@@ -65,7 +65,9 @@ var provider = {
         subtitle: String(e.k).split(" ").slice(5).join(" "),
         score: 96 - j * 0.01,
         copy: e.e,
-        run: paste ? { kind: "run", target: "omarchy-menu-emoji-insert " + shellQuote(e.e), label: "type" } : null
+        // omarchy-menu-emoji-insert pastes through a temporary clipboard and
+        // takes it back afterwards, so the emoji is copied again once it's typed.
+        run: paste ? { kind: "run", target: "omarchy-menu-emoji-insert " + shellQuote(e.e) + "; printf %s " + shellQuote(e.e) + " | wl-copy", label: "type" } : null
       })
     }
     return out

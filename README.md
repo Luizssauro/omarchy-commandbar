@@ -27,7 +27,7 @@ Spotlight-style command bar - app launcher, calculator, currency, time zones, da
 | `100 usd to eur`, `$50`, `50 gbp`, `usd jpy` | Currency conversion, using rates from [open.er-api.com](https://open.er-api.com) |
 | `time`, `time in tokyo`, `3pm cet to pst` | Time zones |
 | `days until dec 25`, `today + 45 days`, `next friday` | Date calculations |
-| `:fire`, `emoji party` | Emoji search. Enter types the emoji into the app you were using |
+| `:fire`, `emoji party` | Emoji search. Enter types the emoji into the app you were using and copies it |
 | `5 km to mi`, `72f`, `5 ft 11 in to cm`, `2 cups in ml` | Unit conversion: length, weight, temperature, volume, area, speed, data and time. Offline |
 | `brave`, `netflix`, `w `, `w github` | Switch to an open window, found by its app or its title. `w ` lists them all, most recent first |
 | `firefox`, `term`, `vsc`, `brave new window` | Open an installed app, or one of its actions like New Window. Only apps: nothing here changes a setting or a default |
@@ -108,7 +108,7 @@ Put your settings in `~/.config/omarchy/extensions/commandbar.json`. They overri
   "currency": { "home": "EUR", "favorites": ["USD", "GBP"] },
   // Default home zone is your system time zone.
   "time": { "home": "Europe/Berlin", "zones": ["UTC", "America/New_York"], "clock24": true },
-  // "paste" types the emoji into the app you were using; "copy" copies it.
+  // "paste" types the emoji into the app you were using and copies it; "copy" only copies it.
   "emoji": { "onEnter": "paste" },
   // This list replaces the default keyword commands.
   "commands": [
