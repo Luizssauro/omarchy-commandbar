@@ -44,6 +44,7 @@ Keys:
 
 - Up/Down or Ctrl+N/P moves the selection.
 - Enter copies, opens or runs the selected row.
+- Alt+1 to Alt+9 copy, open or run that row straight away. Each of the first nine rows shows its key. The `?` help has no shortcuts.
 - Tab fills in the query for the selected row, for example a keyword and a space.
 - Esc clears the text. Press it again to close the bar.
 

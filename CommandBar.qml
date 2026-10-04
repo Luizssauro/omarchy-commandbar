@@ -72,6 +72,8 @@ Item {
   // Results show up to 7 rows before scrolling; the ? list is allowed to
   // grow so it fits without scrolling, as far as the screen allows.
   readonly property int maxRows: 7
+  // Alt+1 … Alt+9 run the first nine results; the ? list doesn't have them.
+  readonly property int quickKeys: root.showingHelp ? 0 : 9
   readonly property bool showingHelp: root.rows.length > 0 && !!root.rows[0].help
   readonly property var selectedRow: root.rows[root.selectedIndex] || null
   readonly property bool noResults: root.rows.length === 0 && input.text.trim() !== ""
@@ -828,6 +830,10 @@ Item {
                 event.accepted = true
               } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 root.activate(root.selectedIndex); event.accepted = true
+              } else if ((event.modifiers & Qt.AltModifier) && event.key >= Qt.Key_1 && event.key <= Qt.Key_9) {
+                var quick = event.key - Qt.Key_1
+                if (quick < Math.min(root.quickKeys, root.rows.length)) { root.selectedIndex = quick; root.activate(quick) }
+                event.accepted = true
               }
             }
           }
@@ -995,7 +1001,7 @@ Item {
               Column {
                 anchors.left: tile.right
                 anchors.leftMargin: Style.spacing.md
-                anchors.right: parent.right
+                anchors.right: quickKey.visible ? quickKey.left : parent.right
                 anchors.rightMargin: Style.spacing.md
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: rowItem.hero ? Style.space(4) : Style.space(2)
@@ -1022,6 +1028,19 @@ Item {
                   font.pixelSize: Style.font.bodySmall
                   elide: Text.ElideRight
                 }
+              }
+
+              Keycap {
+                id: quickKey
+                visible: rowItem.index < root.quickKeys
+                anchors.right: parent.right
+                anchors.rightMargin: Style.spacing.md
+                anchors.verticalCenter: parent.verticalCenter
+                label: "Alt+" + (rowItem.index + 1)
+                foreground: rowItem.selected ? root.selectedText : root.foreground
+                fontFamily: root.fontFamily
+                rounded: root.cornerRadius > 0
+                opacity: rowItem.selected ? 0.9 : 0.6
               }
 
               MouseArea {
