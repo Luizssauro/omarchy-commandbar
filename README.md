@@ -2,7 +2,7 @@
 
 A Spotlight-style command bar for Omarchy. Press a hotkey and type. Results appear as you type, and Enter copies or runs the selected one.
 
-![Command Bar showing its help list](preview.png)
+![Command Bar: Spotlight-style command bar for Omarchy](preview.png)
 
 <p align="center">
   <b>Open an app</b><br>
