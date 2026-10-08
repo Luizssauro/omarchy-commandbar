@@ -420,15 +420,17 @@ Item {
   property var cacheQueue: []
   property var cacheDone: null
 
+  property var cacheInput: null
+
   function cacheRead(name, done) {
-    root.cacheQueue.push({ command: ["python3", root.cacheHelper, "read", name], done: done })
+    root.cacheQueue.push({ command: ["python3", root.cacheHelper, "read", name], input: null, done: done })
     if (!cacheProc.running) root.cacheNext()
   }
 
-  // The content goes in on stdin, as its own argument to bash, never as code.
+  // The content is piped straight to the helper's stdin, never put in its
+  // arguments, so it can't be read from /proc/<pid>/cmdline.
   function cacheWrite(name, text) {
-    root.cacheQueue.push({ command: ["bash", "-c", "printf '%s' \"$1\" | python3 \"$2\" write \"$3\"",
-                                     "_", text, root.cacheHelper, name], done: null })
+    root.cacheQueue.push({ command: ["python3", root.cacheHelper, "write", name], input: text, done: null })
     if (!cacheProc.running) root.cacheNext()
   }
 
@@ -436,12 +438,22 @@ Item {
     if (root.cacheQueue.length === 0) return
     var next = root.cacheQueue.shift()
     root.cacheDone = next.done
+    root.cacheInput = next.input
     cacheProc.command = next.command
+    cacheProc.stdinEnabled = next.input !== null
     cacheProc.running = true
   }
 
   Process {
     id: cacheProc
+    onStarted: {
+      var input = root.cacheInput
+      root.cacheInput = null
+      if (input === null) return
+      cacheProc.write(input)
+      // Closing stdin is what lets the helper see the end of the content.
+      cacheProc.stdinEnabled = false
+    }
     stdout: StdioCollector { id: cacheOut; waitForEnd: true }
     stderr: StdioCollector {
       onStreamFinished: if (text.trim() !== "") console.warn("commandbar: " + text.trim())
