@@ -8,6 +8,7 @@
 .import "apps.js" as Apps
 .import "units.js" as Units
 .import "windows.js" as Windows
+.import "ai.js" as Ai
 
 // Every provider the bar knows about. To add a feature: write providers/<name>.js
 // exporting `var provider = { id, name, icon, match(query, ctx) }`, import it
@@ -21,5 +22,6 @@ var all = [
   Processes.provider,
   Units.provider,
   Windows.provider,
-  Apps.provider
+  Apps.provider,
+  Ai.provider
 ]

@@ -186,7 +186,7 @@ expect("g foo bar", "Search Google: foo bar")
 
 // help: topics, a topic's examples with live answers, search, and quiet previews
 { const top = q("?"), titles = top.map(r => r.title).join("|")
-  const ok = titles === "Open an app|Switch window|Calculator|Units|Currency|Time zones|Dates|Emoji|Kill a process|Keywords"
+  const ok = titles === "Open an app|Switch window|Calculator|Units|Currency|Time zones|Dates|Emoji|Kill a process|Ask your agent|Keywords"
     && top.every(r => r.help && !r.run && !r.copy && r.actionLabel === "Open") && top[2].complete === "?calc" && !top[0].section
   console.log((ok ? "ok  " : "FAIL") + "  \"?\" → " + titles); if (!ok) fails++ }
 { const u = q("?units"), sub = u.map(r => r.title + " " + r.subtitle)
@@ -229,6 +229,71 @@ console.log((out === "it's; rm -rf ~" ? "ok  " : "FAIL") + "  shell quoting → 
   const ok = typed === evil && copied === evil && ran.length === 0
   fs.rmSync(dir, { recursive: true, force: true })
   console.log((ok ? "ok  " : "FAIL") + "  emoji is typed and copied as data" + (ran.length ? " (ran: " + ran.join(", ") + ")" : "")); if (!ok) fails++ }
+
+// ai: the prompt goes to Omarchy's own launcher as one argument.
+{ const fs = require("fs"), os = require("os"), { spawnSync } = require("child_process")
+  const check = (name, ok, extra) => { console.log((ok ? "ok  " : "FAIL") + "  ai: " + name + (extra ? " → " + extra : "")); if (!ok) fails++ }
+  const ai = (query, agent, settings) => Engine.run(query, Engine.deepMerge(config, { ai: settings || {} }), { agent: agent })
+  const fb = { fallback: true }
+
+  check("on by default", q("ai hi").some(r => r.provider === "ai") && Engine.mode("ai foo", config).label === "Agent")
+  check("fallback is off by default", !ai("how do i rebase", "claude").some(r => r.provider === "ai"))
+  { const own = Engine.deepMerge(config, { commands: config.commands.concat({ keyword: "ai", title: "My AI", open: "https://example.com/?q={q}" }) })
+    const rows = Engine.run("ai hi", own, { agent: "claude" })
+    check("a keyword command with the same word wins", rows[0].title === "My AI: hi" && !rows.some(r => r.provider === "ai" && r.run) && Engine.mode("ai hi", own).label === "My AI", rows[0].title) }
+
+  check("keyword with a prompt", ai("ai why is wifi slow", "claude")[0].title === "Ask Claude Code: why is wifi slow")
+  check("hands the prompt to the agent helper", (r => r.kind === "agent" && r.target === "hi there")(ai("ai hi there", "claude")[0].run))
+  check("says it runs without asking", /without asking/.test(ai("ai hi", "codex")[0].subtitle), ai("ai hi", "codex")[0].subtitle)
+  check("keyword alone asks for a prompt and runs nothing", ai("ai", "codex")[0].title === "Ask Codex…" && !ai("ai", "codex")[0].run)
+  check("no default agent opens Omarchy's picker", ai("ai hello", "")[0].run.target === "omarchy-agent --pick")
+  check("an unknown agent shows its id", ai("ai hi", "newagent")[0].title === "Ask newagent: hi")
+  check("a damaged agent name counts as no agent", ["<b>x</b>", "claude code", "a".repeat(40), "-x", "$(id)"].every(a => ai("ai hi", a)[0].run.target === "omarchy-agent --pick"))
+  check("a word starting with the keyword is not the keyword", !ai("aim high", "claude").some(r => r.provider === "ai" && r.run && r.score > 5))
+  check("findable by name", ai("ask cla", "claude").some(r => r.title === "Ask Claude Code"))
+  check("a custom keyword", ai("ask hi", "claude", { keyword: "ask" })[0].title === "Ask Claude Code: hi")
+  check("fallback can be turned off", !ai("how do i rebase", "claude", { fallback: false }).some(r => r.provider === "ai" && r.run))
+  check("one word gets no fallback", !ai("rebase", "claude", fb).some(r => r.provider === "ai" && r.run))
+  { const rows = ai("how do i rebase", "claude", fb)
+    check("fallback offers the agent first, then the chat sites", rows.map(r => r.title.split(":")[0]).join("|") === "Ask Claude Code|Ask ChatGPT|Ask Claude" && rows[1].section === "Chat websites", rows.map(r => r.title.split(":")[0]).join("|")) }
+  check("fallback hides when anything else answers", (r => r[0].title === "4" && !r.some(x => x.provider === "ai"))(ai("2 + 2", "claude", fb)))
+  check("mode chip", (Engine.mode("ai foo", config) || {}).label === "Agent" && !Engine.mode("aim foo", config))
+  check("help topic", Engine.run("?ai", config, { agent: "claude" }).length === 2)
+  { const rows = ai("ai what's 5 & 6?", "claude").filter(r => r.provider === "ai")
+    check("chat sites follow the agent, in order", rows.map(r => r.title.split(":")[0]).join("|") === "Ask Claude Code|Ask ChatGPT|Ask Claude", rows.map(r => r.title.split(":")[0]).join("|"))
+    check("chat prompt is URL-encoded", rows[1].run.kind === "open" && rows[1].run.target === "https://chatgpt.com/?q=what's%205%20%26%206%3F", rows[1].run.target) }
+  check("chat sites get their own section", (r => r[0].section === "Agent" && r[1].section === "Chat websites" && !r[2].section && r[1].actionLabel === "Open website")(ai("ai hi", "claude")))
+  check("chat sites show without a default agent", (r => r[0].title === "Choose a default agent…" && r[1].title === "Ask ChatGPT: hi")(ai("ai hi", "")))
+  check("keyword alone lists no chat sites", ai("ai", "claude").filter(r => r.provider === "ai").length === 1)
+  check("fallback needs a default agent", ai("how do i rebase", "", fb).length === 0)
+  check("chats can be emptied", ai("ai hi", "claude", { chats: [] }).filter(r => r.provider === "ai").length === 1)
+
+  // Run bin/commandbar-agent with stub Omarchy commands and record what reached them.
+  const dir = fs.mkdtempSync(os.tmpdir() + "/commandbar-ai-")
+  const stub = (name, body) => fs.writeFileSync(dir + "/" + name, "#!/bin/bash\n" + body + "\n", { mode: 0o755 })
+  stub("omarchy-default-agent", "cat \"$STUBS/agent\" 2>/dev/null")
+  stub("omarchy-cmd-missing", "[[ $1 != installed ]]")
+  stub("omarchy-agent-prompt", "printf '%s\\n' \"$#\" \"$@\" > \"$STUBS/launched\"")
+  stub("omarchy-agent", "printf '%s\\n' \"$@\" > \"$STUBS/picked\"")
+  stub("notify-send", "printf '%s\\n' \"$@\" > \"$STUBS/notified\"")
+  const helper = (agent, prompt) => {
+    for (const f of ["launched", "picked", "notified"]) fs.rmSync(dir + "/" + f, { force: true })
+    if (agent === null) fs.rmSync(dir + "/agent", { force: true }); else fs.writeFileSync(dir + "/agent", agent + "\n")
+    const r = spawnSync(P + "bin/commandbar-agent", [prompt], { env: Object.assign({}, process.env, { PATH: dir + ":" + process.env.PATH, STUBS: dir }) })
+    const read = f => fs.existsSync(dir + "/" + f) ? fs.readFileSync(dir + "/" + f, "utf8").replace(/\n$/, "").split("\n") : null
+    return { status: r.status, launched: read("launched"), picked: read("picked"), notified: read("notified") }
+  }
+  const evil = "it's $(touch " + dir + "/pwned); `touch " + dir + "/pwned2` && rm -rf ~"
+  { const got = helper("installed", ai("ai " + evil, "claude")[0].run.target).launched || []
+    check("prompt arrives as one unchanged argument", got[0] === "1" && got[1] === evil, got.slice(1).join(" "))
+    check("nothing in the prompt ran", !fs.existsSync(dir + "/pwned") && !fs.existsSync(dir + "/pwned2")) }
+  { const r = helper("missing", "hi")
+    check("an uninstalled agent says so in a notification", r.status === 1 && !r.launched && r.notified && r.notified.includes("missing isn't installed"), (r.notified || []).join(" | ")) }
+  { const r = helper(null, "hi")
+    check("no default agent opens the picker", !r.launched && !r.notified && r.picked && r.picked[0] === "--pick") }
+  { const r = helper("<b>x</b>", "hi")
+    check("a damaged agent name opens the picker, not a notification", !r.launched && !r.notified && r.picked && r.picked[0] === "--pick") }
+  fs.rmSync(dir, { recursive: true, force: true }) }
 
 // bin/commandbar-cache, run against a throwaway HOME.
 { const fs = require("fs"), os = require("os"), { spawnSync } = require("child_process")

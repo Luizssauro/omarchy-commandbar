@@ -1,10 +1,18 @@
 {
   "hotkey": "SUPER + PERIOD",
-  "providers": ["commands", "math", "currency", "time", "emoji", "processes", "units", "windows", "apps"],
+  "providers": ["commands", "math", "currency", "time", "emoji", "processes", "units", "windows", "apps", "ai"],
   "math": { "precision": 10 },
   "currency": { "home": "USD", "favorites": ["EUR", "GBP"] },
   "emoji": { "onEnter": "paste" },
   "time": { "zones": ["UTC", "America/New_York", "Europe/London"], "clock24": true },
+  "ai": {
+    "keyword": "ai",
+    "fallback": false,
+    "chats": [
+      { "title": "ChatGPT", "open": "https://chatgpt.com/?q={q}" },
+      { "title": "Claude", "open": "https://claude.ai/new?q={q}" }
+    ]
+  },
   "commands": [
     { "keyword": "g", "title": "Search Google", "open": "https://www.google.com/search?q={q}" },
     { "keyword": "yt", "title": "Search YouTube", "open": "https://www.youtube.com/results?search_query={q}" },

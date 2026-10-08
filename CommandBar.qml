@@ -48,6 +48,7 @@ Item {
   property var hiddenApps: ({})     // ids Omarchy hides from its own launcher
   property var launches: ({})       // id -> times launched from the bar
   property var windows: []          // [{ address, cls, title, workspace, focus }], taken on open
+  property string agent: ""         // Omarchy's default agent: claude, codex, …; "" until one is picked
 
   // Menu surface tokens, so themes that style the Omarchy menu style this too.
   property color background: Color.menu.background
@@ -111,6 +112,7 @@ Item {
     root.lastPointer = Qt.point(-1, -1)
     root.refreshZones()
     root.refreshWindows()
+    root.refreshAgent()   // picked up when it changes, even after the shell started
     root.recompute()   // the kept query may be time-sensitive ("time", "3pm to tokyo")
     // Like Spotlight: the last query comes back selected, so typing replaces it
     // and an arrow key keeps it.
@@ -156,6 +158,7 @@ Item {
       apps: root.apps,
       windows: root.windows,
       launches: root.launches,
+      agent: root.agent,
       requestProcesses: root.requestProcesses,
       requestRates: root.refreshRates
     })
@@ -192,6 +195,7 @@ Item {
       if (row.run.kind === "app") root.launchApp(row.run.target, row.run.action)
       else if (row.run.kind === "window") root.focusWindow(row.run.target)
       else if (row.run.kind === "open") Quickshell.execDetached(["xdg-open", row.run.target])
+      else if (row.run.kind === "agent") Quickshell.execDetached([root.pluginDir + "/bin/commandbar-agent", row.run.target])
       else Quickshell.execDetached(["bash", "-c", row.run.target])
       return
     }
@@ -491,6 +495,27 @@ Item {
     }
   }
 
+  // ---------------------------------------------------------------- agent
+
+  // Asked of `omarchy-default-agent`, the same answer Omarchy's launcher uses,
+  // on every open. The shell never opens the file itself: at most 64 bytes of
+  // the answer come back, and providers/ai.js accepts only an agent-like name.
+  function refreshAgent() {
+    if (!agentProc.running) agentProc.running = true
+  }
+
+  Process {
+    id: agentProc
+    command: ["bash", "-c", "timeout 2 omarchy-default-agent 2>/dev/null | head -c 64"]
+    stdout: StdioCollector { id: agentOut; waitForEnd: true }
+    onExited: {
+      var next = (String(agentOut.text || "").split("\n")[0] || "").trim()
+      if (next === root.agent) return
+      root.agent = next
+      if (root.opened) root.recompute()
+    }
+  }
+
   // ---------------------------------------------------------------- emoji
 
   FileView {
@@ -615,6 +640,7 @@ Item {
     root.cacheRead("last-query", root.loadLastQuery)
     root.cacheRead("launches.json", root.loadLaunches)
     root.cacheRead("rates.json", root.loadRates)
+    root.refreshAgent()
   }
 
   FileView {

@@ -1,0 +1,29 @@
+#!/bin/bash
+# Hands a prompt to Omarchy's default agent, or says why it can't.
+#
+# Usage: commandbar-agent <prompt>
+#
+# `omarchy default agent <name>` installs an agent before it saves the name, so
+# a missing agent means it was removed since, or the name came from dotfiles on
+# a machine without it. omarchy-agent-prompt reports that only on stderr, which
+# nothing shows when the bar starts it, and its exit status arrives only when
+# the terminal closes. So the check it would fail on is made here first, and
+# shown as a notification pointing at the command that installs it again.
+
+set -u
+
+agent=$(omarchy-default-agent 2>/dev/null | head -c 64)
+
+# Unset since the bar last looked, or not a name Omarchy writes (the same
+# check as providers/ai.js): offer the choice, as the bar would have.
+if [[ ! $agent =~ ^[a-z0-9][a-z0-9._-]{0,31}$ ]]; then
+  exec omarchy-agent --pick
+fi
+
+if omarchy-cmd-missing "$agent"; then
+  notify-send -a "Command Bar" "$agent isn't installed" \
+    "Run omarchy default agent $agent to install it again, or pick another agent"
+  exit 1
+fi
+
+exec omarchy-agent-prompt "$1"

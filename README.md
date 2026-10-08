@@ -1,6 +1,6 @@
 # Command Bar
 
-Spotlight-style command bar - app launcher, calculator, currency, time zones, date maths, emoji, kill process and your own keyword commands
+Spotlight-style command bar - app launcher, calculator, currency, time zones, date maths, emoji, kill process, ask your AI agent and your own keyword commands
 
 ![Command Bar: Spotlight-style command bar for Omarchy](preview.png)
 
@@ -32,6 +32,7 @@ Spotlight-style command bar - app launcher, calculator, currency, time zones, da
 | `brave`, `netflix`, `w `, `w github` | Switch to an open window, found by its app or its title. `w ` lists them all, most recent first |
 | `firefox`, `term`, `vsc`, `brave new window` | Open an installed app, or one of its actions like New Window. Only apps: nothing here changes a setting or a default |
 | `kill`, `kill chrome`, `kill -9 node` | Quit one of your processes, or all processes with that name |
+| `ai why is my wifi slow` | Open Omarchy's default agent (`omarchy default agent`) in a terminal with that prompt, or ChatGPT or Claude in your browser. |
 | `g …`, `yt …`, `gh …`, `wiki …`, `lock` | Keyword commands, which you can change in the config |
 
 Type part of a feature's name to find it. `emo` finds Search emoji and `curr` finds Convert currency.
@@ -78,14 +79,16 @@ All of these come with Omarchy:
 - `notify-send`: warning when the hotkey is already taken
 - `python3`: reading and writing the cache files safely (`bin/commandbar-cache`)
 - `omarchy-menu-emoji-insert` and Omarchy's `emojis.json`: emoji
+- `omarchy-default-agent`, `omarchy-cmd-missing`, `omarchy-agent-prompt` and `omarchy-agent --pick`: asking your agent (`bin/commandbar-agent`)
 
 ### Network, files and processes
 
-- The only network request is to `https://open.er-api.com/v6/latest/USD`, made when you convert currency and the saved rates are out of date. The rates update once a day. What you type is not sent anywhere, except the text you search with a web keyword like `g`.
+- The only network request is to `https://open.er-api.com/v6/latest/USD`, made when you convert currency and the saved rates are out of date. The rates update once a day. What you type is not sent anywhere, except the text you search with a web keyword like `g` and the prompt you give your agent with `ai`.
 - It writes only to `~/.cache/omarchy-commandbar/`: the saved rates, your last query, and how often you've opened each app from the bar (used to order equally good matches). It does not change your Hyprland or Omarchy config files.
 - The cache files are read and written only through `bin/commandbar-cache`. It refuses symlinks, hard links, files you don't own and files over a size limit (4 KiB for the last query, 64 KiB for app counts, 256 KiB for rates), and saves each file through a private temporary file.
 - It sets its hotkey in the running Hyprland with `hyprctl eval`, and sets it again after Hyprland reloads its config. The hotkey is removed when the plugin is disabled or removed.
 - It lists only your own processes, and quits one only when you press Enter on it.
+- It asks `omarchy-default-agent` for your default agent each time it opens, reading at most 64 bytes of the answer, and starts that agent only when you press Enter on an `ai` row. The bar itself sends nothing to an AI service; the agent does, as it would if you started it yourself.
 
 ## Remove
 
@@ -105,13 +108,15 @@ Put your settings in `~/.config/omarchy/extensions/commandbar.json`. They overri
   // A Hyprland key combination. "" means no hotkey.
   "hotkey": "SUPER + PERIOD",
   // Features to turn on. When results score equally, earlier ones come first.
-  "providers": ["commands", "math", "currency", "time", "emoji", "processes", "units", "windows", "apps"],
+  "providers": ["commands", "math", "currency", "time", "emoji", "processes", "units", "windows", "apps", "ai"],
   // Default home currency is USD.
   "currency": { "home": "EUR", "favorites": ["USD", "GBP"] },
   // Default home zone is your system time zone.
   "time": { "home": "Europe/Berlin", "zones": ["UTC", "America/New_York"], "clock24": true },
   // "paste" types the emoji into the app you were using and copies it; "copy" only copies it.
   "emoji": { "onEnter": "paste" },
+  // Asking your agent. See "Asking your agent" below.
+  "ai": { "keyword": "ai", "fallback": false, "chats": [{ "title": "ChatGPT", "open": "https://chatgpt.com/?q={q}" }] },
   // This list replaces the default keyword commands.
   "commands": [
     { "keyword": "g", "title": "Search Google", "open": "https://www.google.com/search?q={q}" },
@@ -123,6 +128,20 @@ Put your settings in `~/.config/omarchy/extensions/commandbar.json`. They overri
 ```
 
 `{q}` is whatever you type after the keyword. In `open` commands it is URL-encoded. In `run` commands it is shell-quoted, so it can't change the command itself.
+
+## Asking your agent
+
+`ai <prompt>` hands your prompt to `omarchy agent prompt`, which opens the agent you picked with `omarchy default agent` in a terminal, the way the Super + Shift + Ctrl + A key does. If you haven't picked one, Enter opens Omarchy's agent menu instead. Omarchy installs an agent when you pick it. If it has been removed since, a notification says so and how to install it again.
+
+Omarchy starts every agent with its auto-approve setting (`claude --permission-mode auto`, `codex --approve-for-me`, `gemini --yolo` and so on), so the agent runs commands without asking. The row says so before you press Enter.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `keyword` | `"ai"` | The word that starts a prompt. A keyword command with the same word takes it over |
+| `fallback` | `false` | `true` offers the agent and the chat websites when a query of two words or more matches nothing else, as if you had typed `ai` first. Enter on a mistyped query then starts the agent |
+| `chats` | ChatGPT, Claude | Chat websites listed under the agent. `{q}` is the prompt, URL-encoded. `[]` hides them |
+
+Under the agent, a "Chat websites" section lists each site, so Alt+2 and Alt+3 open the prompt in ChatGPT or Claude instead. Add others, such as Perplexity (`https://www.perplexity.ai/search?q={q}`), to the list. Opening one sends your prompt to that site, the same as a web keyword.
 
 ## Adding a feature
 
@@ -146,7 +165,7 @@ var provider = {
 }
 ```
 
-A result can include `run: { kind: "open" | "run", target }` to open or run something on Enter. `ctx.settings` is the provider's section of the config. `ctx` also has `rates`, `zones`, `localZone`, `emojis`, `processes`, `now()`, `format(n)` and `plain(n)`.
+A result can include `run: { kind: "open" | "run", target }` to open or run something on Enter, `group` to list it under its own heading instead of the feature's name, and `fallback: true` to show it only when no other result does. `ctx.settings` is the provider's section of the config. `ctx` also has `rates`, `zones`, `localZone`, `emojis`, `processes`, `now()`, `format(n)` and `plain(n)`.
 
 To enable it, import it in [`providers/index.js`](providers/index.js), add it to the list there, and add its `id` to `"providers"` in the config.
 
