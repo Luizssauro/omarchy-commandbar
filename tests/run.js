@@ -181,6 +181,7 @@ expect("g foo bar", "Search Google: foo bar")
     ["already bound → nothing", (r => r.bound && r.lua.length === 0)(H.plan(j([other, mine]), "SUPER + PERIOD", cmd))],
     ["key changed → unbind old, bind new", (r => r.bound && r.lua[0] === 'hl.unbind("SUPER + PERIOD")' && /^hl\.bind\("SUPER \+ ALT \+ C"/.test(r.lua[1]))(H.plan(j([mine]), "SUPER + ALT + C", cmd))],
     ["taken by another → no bind, conflict", (r => !r.bound && r.conflict === "Keybindings" && r.lua.length === 0)(H.plan(j([other]), "SUPER + K", cmd))],
+    ["key changed to taken → unbind old, conflict", (r => !r.bound && r.conflict !== "" && r.lua.length === 1 && r.lua[0] === 'hl.unbind("SUPER + PERIOD")')( H.plan(j([mine, other]), "SUPER + K", cmd))],
     ["hotkey \"\" → unbind ours only", (r => !r.bound && r.lua.join() === 'hl.unbind("SUPER + PERIOD")')(H.plan(j([other, mine]), "", cmd))],
     ["lua strings escaped", H.luaString('a"b\\c') === '"a\\"b\\\\c"'],
     ["bad json → still binds", H.plan("not json", "SUPER + PERIOD", cmd).bound]
